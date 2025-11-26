@@ -1,0 +1,28 @@
+name: Firebase Cleaner Bot
+
+on:
+  schedule:
+    - cron: '*/1 * * * *'  # يعمل كل دقيقة
+  workflow_dispatch:        # يمكنك تشغيله يدوياً أيضاً
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          npm init -y
+          npm install firebase-admin
+
+      - name: Run cleaner script
+        env:
+          FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
+        run: node cleaner.js
