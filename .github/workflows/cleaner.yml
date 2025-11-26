@@ -2,8 +2,8 @@ name: Firebase Cleaner Bot
 
 on:
   schedule:
-    - cron: '*/1 * * * *'  # يعمل كل دقيقة
-  workflow_dispatch:        # يمكنك تشغيله يدوياً أيضاً
+    - cron: '*/1 * * * *'
+  workflow_dispatch:
 
 jobs:
   clean:
