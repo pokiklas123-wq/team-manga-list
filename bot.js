@@ -77,8 +77,50 @@ const BAD_WORDS = [
     'قحبه', 'كحبة', 'كحبه', 'زبي', 'قضيب', 'مهبل', 'فرج', 'منيوكة', 
     'منيوكه', 'داشر', 'داشرة', 'داشرر', 'داعر', 'داعره', 'داعرر', 
     'سافل', 'سافلة', 'سافلل', 'سكس', 'sex', 'porn', 'قحب', 'قحبة', 
-    'قحبه', 'قحبو'
+    'قحبه', 'قحبو', 'نيك امك', 'نيكك', 'عطاي', 'نيك'
 ];
+
+// 🛡️ نظام كشف الروابط المتقدم
+const LINK_PATTERNS = [
+    /https?:\/\/[^\s]+/g,                    // http:// أو https://
+    /www\.[^\s]+\.[^\s]+/g,                 // www.example.com
+    /[^\s]+\.[a-z]{2,}(\/[^\s]*)?/gi,       // domain.com أو domain.com/path
+    /t\.me\/[^\s]+/g,                       // روابط التلغرام
+    /bit\.ly\/[^\s]+/g,                     // روابط مختصرة
+    /youtu\.be\/[^\s]+/g,                   // روابط يوتيوب مختصرة
+    /youtube\.com\/[^\s]+/g,                // روابط يوتيوب
+    /instagram\.com\/[^\s]+/g,              // روابط انستجرام
+    /facebook\.com\/[^\s]+/g,               // روابط فيسبوك
+    /twitter\.com\/[^\s]+/g,                // روابط تويتر
+    /discord\.gg\/[^\s]+/g                  // روابط ديسكورد
+];
+
+// 🔍 دالة كشف الروابط المحسنة
+function containsLinks(text) {
+    if (!text || typeof text !== 'string') {
+        return false;
+    }
+    
+    console.log('🔗 فحص النص للروابط:', text);
+    
+    // فحص جميع أنماط الروابط
+    for (const pattern of LINK_PATTERNS) {
+        const matches = text.match(pattern);
+        if (matches && matches.length > 0) {
+            console.log(`🚨 اكتشاف روابط: ${matches.join(', ')}`);
+            return true;
+        }
+    }
+    
+    // فحص الروابط المشفرة (URL encoded)
+    if (text.includes('%2F%2F') || text.includes('http%3A')) {
+        console.log('🚨 اكتشاف روابط مشفرة');
+        return true;
+    }
+    
+    console.log('✅ لا توجد روابط في النص');
+    return false;
+}
 
 // 🔍 دالة للكشف عن السب - الإصدار المحسن
 function containsBadWords(text) {
@@ -114,6 +156,11 @@ function containsBadWords(text) {
     
     console.log('✅ النص نظيف');
     return false;
+}
+
+// 🛡️ دالة الفحص الرئيسية المحسنة
+function containsBadWordsOrLinks(text) {
+    return containsBadWords(text) || containsLinks(text);
 }
 
 // 🗑️ دالة حذف التعليق/الرد مع تحديث العداد
@@ -216,12 +263,12 @@ function startCommentMonitoring() {
         
         if (comment && comment.user_comment) {
             // فحص التعليق الرئيسي
-            if (containsBadWords(comment.user_comment)) {
-                console.log(`🚨 اكتشاف سب في تعليق: ${commentKey}`);
+            if (containsBadWordsOrLinks(comment.user_comment)) {
+                console.log(`🚨 اكتشاف محتوى محظور في تعليق: ${commentKey}`);
                 const deleteResult = await deleteOffensiveContent(commentKey);
                 if (deleteResult) {
                     await addUserWarning(comment.user_id);
-                    sendTelegramAlert(`🚨 تم حذف تعليق مسيء\n👤 المستخدم: ${comment.user_name}\n📝 التعليق: ${comment.user_comment.substring(0, 100)}...`);
+                    sendTelegramAlert(`🚨 تم حذف تعليق محظور\n👤 المستخدم: ${comment.user_name}\n📝 التعليق: ${comment.user_comment.substring(0, 100)}...`);
                 }
             }
         }
@@ -250,12 +297,12 @@ function startCommentMonitoring() {
                 
                 if (reply && reply.text_rep) {
                     console.log(`💬 فحص الرد: ${replyKey} - النص: ${reply.text_rep}`);
-                    if (containsBadWords(reply.text_rep)) {
-                        console.log(`🚨 اكتشاف سب في رد: ${replyKey}`);
+                    if (containsBadWordsOrLinks(reply.text_rep)) {
+                        console.log(`🚨 اكتشاف محتوى محظور في رد: ${replyKey}`);
                         const deleteResult = await deleteOffensiveContent(commentKey, replyKey);
                         if (deleteResult) {
                             await addUserWarning(reply.user_id);
-                            sendTelegramAlert(`🚨 تم حذف رد مسيء\n👤 المستخدم: ${reply.user_name}\n📝 الرد: ${reply.text_rep.substring(0, 100)}...`);
+                            sendTelegramAlert(`🚨 تم حذف رد محظور\n👤 المستخدم: ${reply.user_name}\n📝 الرد: ${reply.text_rep.substring(0, 100)}...`);
                         }
                     }
                 }
@@ -301,7 +348,7 @@ async function scanExistingComments() {
                 const comment = comments[commentKey];
                 
                 // فحص التعليق الرئيسي
-                if (comment.user_comment && containsBadWords(comment.user_comment)) {
+                if (comment.user_comment && containsBadWordsOrLinks(comment.user_comment)) {
                     console.log(`🚨 حذف تعليق رئيسي: ${commentKey}`);
                     const deleteResult = await deleteOffensiveContent(commentKey);
                     if (deleteResult) {
@@ -315,7 +362,7 @@ async function scanExistingComments() {
                     console.log(`🔍 فحص ${Object.keys(comment.reply).length} رد في التعليق: ${commentKey}`);
                     for (const replyKey in comment.reply) {
                         const reply = comment.reply[replyKey];
-                        if (reply.text_rep && containsBadWords(reply.text_rep)) {
+                        if (reply.text_rep && containsBadWordsOrLinks(reply.text_rep)) {
                             console.log(`🚨 حذف رد: ${replyKey}`);
                             const deleteResult = await deleteOffensiveContent(commentKey, replyKey);
                             if (deleteResult) {
@@ -330,7 +377,7 @@ async function scanExistingComments() {
             console.log('📭 لا توجد تعليقات للفحص');
         }
         
-        console.log(`✅ اكتمل الفحص - تم حذف ${deletedCount} محتوى مسيء`);
+        console.log(`✅ اكتمل الفحص - تم حذف ${deletedCount} محتوى محظور`);
         return deletedCount;
     } catch (error) {
         console.log('❌ خطأ في فحص التعليقات: ' + error.message);
@@ -414,6 +461,7 @@ bot.onText(/\/start/, (msg) => {
 🗑️ آخر حذف: يعمل الآن
 🌐 UptimeRobot: نشط
 🛡️ مراقبة التعليقات: نشطة
+🔗 كشف الروابط: نشط
 
 *الأوامر:*
 /start - البدء
@@ -426,6 +474,7 @@ bot.onText(/\/start/, (msg) => {
 /user_warnings [user_id] - تحذيرات مستخدم
 /badwords_list - عرض الكلمات الممنوعة
 /test_filter [نص] - اختبار الفلتر
+/test_links [نص] - اختبار كشف الروابط
 /add_word [كلمة] - إضافة كلمة ممنوعة
 /remove_word [كلمة] - إزالة كلمة ممنوعة`, { parse_mode: 'Markdown' });
 });
@@ -471,7 +520,37 @@ bot.onText(/\/test_filter (.+)/, (msg, match) => {
     }
 });
 
-// باقي الأوامر تبقى كما هي...
+// أمر اختبار كشف الروابط
+bot.onText(/\/test_links (.+)/, (msg, match) => {
+    const chatId = msg.chat.id;
+    const text = match[1];
+    
+    const hasLinks = containsLinks(text);
+    const hasBadWords = containsBadWords(text);
+    
+    let message = `📝 *نتيجة الفحص:*\n\nالنص: "${text}"\n\n`;
+    
+    if (hasLinks) {
+        message += "🚨 *تم اكتشاف روابط!*\n";
+    } else {
+        message += "✅ *لا توجد روابط*\n";
+    }
+    
+    if (hasBadWords) {
+        message += "🚨 *تم اكتشاف كلمات مسيئة!*\n";
+    } else {
+        message += "✅ *لا توجد كلمات مسيئة*\n";
+    }
+    
+    if (hasLinks || hasBadWords) {
+        message += "\n⚠️ سيتم حذف هذا المحتوى تلقائياً.";
+    } else {
+        message += "\n🎉 المحتوى آمن ومقبول.";
+    }
+    
+    bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+});
+
 bot.onText(/\/protect/, async (msg) => {
   const chatId = msg.chat.id;
   
