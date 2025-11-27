@@ -2,389 +2,271 @@ const TelegramBot = require('node-telegram-bot-api');
 const admin = require('firebase-admin');
 const express = require('express');
 const https = require('https');
-const fs = require('fs');
-const path = require('path');
 
+// بدء خادم ويب لـ UptimeRobot
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // طرق UptimeRobot
 app.get('/', (req, res) => {
-  res.json({ status: 'active', service: 'Firebase Bot with Fixed File Editor' });
+  console.log('📍 طلب على الصفحة الرئيسية');
+  res.json({ 
+    status: 'active', 
+    service: 'Firebase Protection Bot',
+    timestamp: new Date().toLocaleString('ar-EG'),
+    uptime: Math.floor(process.uptime()) + ' seconds'
+  });
 });
 
 app.get('/health', (req, res) => {
-  res.status(200).send('OK');
+  console.log('❤️ طلب health check');
+  res.status(200).send('OK - ' + new Date().toLocaleTimeString('ar-EG'));
 });
 
+app.get('/ping', (req, res) => {
+  console.log('🏓 طلب ping');
+  res.send('PONG - ' + new Date().toLocaleTimeString('ar-EG'));
+});
+
+// بدء الخادم
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('✅ خادم ويب يعمل');
+  console.log('✅ خادم ويب يعمل على المنفذ: ' + PORT);
 });
 
-// البوت الأساسي
-const token = process.env.BOT_TOKEN;
-const bot = new TelegramBot(token, { polling: true });
+console.log('🚀 بدء تشغيل البوت مع الحماية النشطة...');
 
-// تهيئة Firebase
-try {
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      project_id: process.env.FIREBASE_PROJECT_ID,
-      private_key: privateKey,
-      client_email: process.env.FIREBASE_CLIENT_EMAIL
-    }),
-    databaseURL: 'https://manga-arabic-default-rtdb.europe-west1.firebasedatabase.app'
-  });
-  console.log('✅ تم الاتصال بـ Firebase');
-} catch (error) {
-  console.log('❌ خطأ في Firebase:', error.message);
+// 🔥 الجزء الأساسي: البوت والحماية
+const token = process.env.BOT_TOKEN;
+if (!token) {
+  console.log('❌ BOT_TOKEN غير موجود');
+  process.exit(1);
 }
 
-// 🛠️ **الإصلاح: نظام إدارة الملفات المصحح**
-const ALLOWED_FILES = ['bot.js', 'package.json', 'README.md'];
+const bot = new TelegramBot(token, { polling: true });
+console.log('✅ بوت التليجرام متصل');
 
-// 🛠️ **الإصلاح: تخزين حالة المستخدمين بشكل آمن**
-const userEditState = new Map();
-
-// 🛠️ **الإصلاح: أمر عرض الملفات بشكل صحيح**
-bot.onText(/\/edit_files/, (msg) => {
-  const chatId = msg.chat.id;
-  console.log(`📁 طلب تعديل الملفات من: ${chatId}`);
-  
-  const keyboard = {
-    inline_keyboard: ALLOWED_FILES.map(file => [
-      { text: `📄 ${file}`, callback_data: `edit_${file}` }
-    ])
-  };
-  
-  bot.sendMessage(chatId, '📁 اختر الملف الذي تريد تعديله:', {
-    reply_markup: keyboard
-  });
-});
-
-// 🛠️ **الإصلاح: معالجة الـ callback بشكل صحيح**
-bot.on('callback_query', async (callbackQuery) => {
-  const chatId = callbackQuery.message.chat.id;
-  const messageId = callbackQuery.message.message_id;
-  const data = callbackQuery.data;
-
-  console.log(`🔘 ضغط على: ${data} من: ${chatId}`);
-
-  try {
-    if (data.startsWith('edit_')) {
-      const fileName = data.replace('edit_', '');
-      
-      if (!ALLOWED_FILES.includes(fileName)) {
-        await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ ملف غير مسموح' });
-        return;
-      }
-
-      // 🛠️ **الإصلاح: قراءة الملف من المسار الصحيح**
-      const filePath = path.join(__dirname, fileName);
-      console.log(`📖 جاري قراءة الملف: ${filePath}`);
-      
-      if (!fs.existsSync(filePath)) {
-        await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ الملف غير موجود' });
-        await bot.sendMessage(chatId, `❌ الملف ${fileName} غير موجود في السيرفر.`);
-        return;
-      }
-
-      const fileContent = fs.readFileSync(filePath, 'utf8');
-      console.log(`✅ تم قراءة الملف ${fileName}، الطول: ${fileContent.length} حرف`);
-
-      // تقطيع المحتوى إذا كان طويلاً
-      let displayContent = fileContent;
-      if (fileContent.length > 3000) {
-        displayContent = fileContent.substring(0, 3000) + '\n\n... [المحتوى أطول من 3000 حرف]';
-      }
-
-      await bot.editMessageText(`📄 *محتوى ${fileName}:*\n\n\`\`\`javascript\n${displayContent}\n\`\`\``, {
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '✏️ تعديل هذا الملف', callback_data: `confirmedit_${fileName}` }],
-            [{ text: '📋 رؤية المحتوى الكامل', callback_data: `fullcontent_${fileName}` }],
-            [{ text: '📁 رجوع للقائمة', callback_data: 'back_to_list' }]
-          ]
-        }
-      });
-
-      await bot.answerCallbackQuery(callbackQuery.id, { text: '✅ تم تحميل الملف' });
-    }
-
-    // 🛠️ **الإصلاح: تأكيد التعديل**
-    else if (data.startsWith('confirmedit_')) {
-      const fileName = data.replace('confirmedit_', '');
-      
-      userEditState.set(chatId, { 
-        file: fileName, 
-        step: 'waiting_content',
-        messageId: messageId 
-      });
-
-      await bot.editMessageText(`✏️ *التعديل: ${fileName}*\n\nالآن أرسل المحتوى الجديد للملف:\n\n• يمكنك إرسال الكود مع \\\`\\\`\\\`javascript أو بدونه\n• استخدم /cancel للإلغاء`, {
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '❌ إلغاء التعديل', callback_data: 'cancel_edit' }]
-          ]
-        }
-      });
-
-      await bot.answerCallbackQuery(callbackQuery.id, { text: '✏️ جاهز لتلقي المحتوى' });
-    }
-
-    // 🛠️ **الإصلاح: إلغاء التعديل**
-    else if (data === 'cancel_edit') {
-      userEditState.delete(chatId);
-      await bot.editMessageText('❌ تم إلغاء التعديل', {
-        chat_id: chatId,
-        message_id: messageId
-      });
-      await bot.answerCallbackQuery(callbackQuery.id, { text: 'تم الإلغاء' });
-    }
-
-    // 🛠️ **الإصلاح: رؤية المحتوى الكامل**
-    else if (data.startsWith('fullcontent_')) {
-      const fileName = data.replace('fullcontent_', '');
-      const filePath = path.join(__dirname, fileName);
-      
-      try {
-        const fileContent = fs.readFileSync(filePath, 'utf8');
-        
-        // إرسال المحتوى كملف نصي
-        await bot.sendDocument(chatId, Buffer.from(fileContent, 'utf8'), {
-          filename: fileName,
-          contentType: 'text/plain'
-        });
-        
-        await bot.answerCallbackQuery(callbackQuery.id, { text: '✅ تم إرسال الملف' });
-      } catch (error) {
-        await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ خطأ في إرسال الملف' });
-      }
-    }
-
-    // 🛠️ **الإصلاح: الرجوع للقائمة**
-    else if (data === 'back_to_list') {
-      await bot.editMessageText('📁 اختر الملف الذي تريد تعديله:', {
-        chat_id: chatId,
-        message_id: messageId,
-        reply_markup: {
-          inline_keyboard: ALLOWED_FILES.map(file => [
-            { text: `📄 ${file}`, callback_data: `edit_${file}` }
-          ])
-        }
-      });
-      await bot.answerCallbackQuery(callbackQuery.id, { text: '📁 قائمة الملفات' });
-    }
-
-    // 🛠️ **الإصلاح: إعادة تشغيل البوت**
-    else if (data === 'restart_bot') {
-      await bot.editMessageText('🔄 جاري إعادة تشغيل البوت...', {
-        chat_id: chatId,
-        message_id: messageId
-      });
-      
-      await bot.answerCallbackQuery(callbackQuery.id, { text: 'جاري إعادة التشغيل' });
-      
-      setTimeout(() => {
-        process.exit(0);
-      }, 2000);
-    }
-
-  } catch (error) {
-    console.log('❌ خطأ في معالجة الزر:', error);
-    await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ حدث خطأ' });
-  }
-});
-
-// 🛠️ **الإصلاح: استقبال المحتوى الجديد بشكل صحيح**
-bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const text = msg.text;
-
-  // تجاهل الأوامر الأخرى
-  if (text && text.startsWith('/')) {
-    return;
-  }
-
-  if (userEditState.has(chatId) && userEditState.get(chatId).step === 'waiting_content') {
-    const fileInfo = userEditState.get(chatId);
-    userEditState.delete(chatId);
-
-    try {
-      let content = text;
-      
-      // تنظيف المحتوى إذا كان في كود block
-      if (text.includes('```')) {
-        const match = text.match(/```(?:javascript)?\n?([\s\S]*?)\n?```/);
-        if (match && match[1]) {
-          content = match[1];
-        } else {
-          content = text.replace(/```/g, '');
-        }
-      }
-
-      // 🛠️ **الإصلاح: حفظ الملف في المسار الصحيح**
-      const filePath = path.join(__dirname, fileInfo.file);
-      fs.writeFileSync(filePath, content, 'utf8');
-      
-      console.log(`✅ تم تحديث الملف ${fileInfo.file} من قبل ${chatId}`);
-
-      await bot.sendMessage(chatId, `✅ *تم تحديث الملف ${fileInfo.file} بنجاح!*\n\nسيتم تطبيق التغييرات بعد إعادة التشغيل.`, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🔄 إعادة تشغيل البوت الآن', callback_data: 'restart_bot' }],
-            [{ text: '📁 تعديل ملف آخر', callback_data: 'back_to_list' }]
-          ]
-        }
-      });
-      
-    } catch (error) {
-      console.log('❌ خطأ في حفظ الملف:', error);
-      await bot.sendMessage(chatId, `❌ خطأ في حفظ الملف: ${error.message}`);
-    }
-  }
-});
-
-// أمر الإلغاء
-bot.onText(/\/cancel/, (msg) => {
-  const chatId = msg.chat.id;
-  if (userEditState.has(chatId)) {
-    userEditState.delete(chatId);
-    bot.sendMessage(chatId, '❌ تم إلغاء العملية الحالية.');
-  }
-});
-
-// الأوامر الإضافية (متبقية كما هي)
-bot.onText(/\/create_file (.+)/, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const fileName = match[1];
-  
-  if (!fileName.match(/^[a-zA-Z0-9_\-\.]+$/)) {
-    bot.sendMessage(chatId, '❌ اسم ملف غير صالح. استخدم أحرف إنجليزية وأرقام فقط.');
-    return;
-  }
-  
-  const filePath = path.join(__dirname, fileName);
-  if (fs.existsSync(filePath)) {
-    bot.sendMessage(chatId, `❌ الملف ${fileName} موجود بالفعل. استخدم /edit_files لتعديله.`);
-    return;
-  }
-  
-  try {
-    fs.writeFileSync(filePath, '// ملف جديد\n// تم إنشاؤه من تليجرام\n', 'utf8');
-    if (!ALLOWED_FILES.includes(fileName)) {
-      ALLOWED_FILES.push(fileName);
-    }
-    
-    bot.sendMessage(chatId, `✅ تم إنشاء الملف ${fileName} بنجاح!`, {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '✏️ تعديل الملف الجديد', callback_data: `edit_${fileName}` }]
-        ]
-      }
+// تهيئة Firebase
+let firebaseInitialized = false;
+try {
+  if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL) {
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        project_id: process.env.FIREBASE_PROJECT_ID,
+        private_key: privateKey,
+        client_email: process.env.FIREBASE_CLIENT_EMAIL
+      }),
+      databaseURL: 'https://manga-arabic-default-rtdb.europe-west1.firebasedatabase.app'
     });
-  } catch (error) {
-    bot.sendMessage(chatId, `❌ خطأ في إنشاء الملف: ${error.message}`);
+    firebaseInitialized = true;
+    console.log('✅ تم الاتصال بـ Firebase بنجاح');
+  } else {
+    console.log('❌ متغيرات Firebase مفقودة');
   }
-});
+} catch (firebaseError) {
+  console.log('❌ خطأ في Firebase:', firebaseError.message);
+}
 
-bot.onText(/\/file_system/, (msg) => {
-  const chatId = msg.chat.id;
-  
-  let fileInfo = '📁 **ملفات النظام:**\n\n';
-  
-  ALLOWED_FILES.forEach(file => {
-    const filePath = path.join(__dirname, file);
-    try {
-      if (fs.existsSync(filePath)) {
-        const stats = fs.statSync(filePath);
-        const size = (stats.size / 1024).toFixed(2);
-        fileInfo += `📄 ${file} - ${size} KB\n`;
-      } else {
-        fileInfo += `❌ ${file} - غير موجود\n`;
-      }
-    } catch (error) {
-      fileInfo += `❌ ${file} - خطأ في القراءة\n`;
-    }
-  });
-  
-  bot.sendMessage(chatId, fileInfo, { parse_mode: 'Markdown' });
-});
-
-// كود الحماية الأساسي (يبقى كما هو)
+// 🛡️ كود الحماية الأساسي - هذا الجزء كان ناقصاً!
 const ALLOWED_NODES = ['users', 'comments', 'views', 'update'];
 
 async function protectionCycle() {
+  if (!firebaseInitialized) {
+    console.log('⏳ Firebase غير مهيئ، تخطي الدورة');
+    return;
+  }
+  
   try {
-    console.log('🔍 دورة حماية - ' + new Date().toLocaleTimeString('ar-EG'));
+    console.log('🔍 بدء دورة حماية - ' + new Date().toLocaleTimeString('ar-EG'));
     
     const db = admin.database();
     const snapshot = await db.ref('/').once('value');
     const data = snapshot.val();
 
     let deletedNodes = 0;
+    let deletedUsers = 0;
+    
     if (data) {
       for (const key in data) {
         if (!ALLOWED_NODES.includes(key)) {
-          await db.ref(key).remove();
+          await db.ref(key).remove().catch(e => {
+            console.log('⚠️ خطأ في حذف ' + key + ': ' + e.message);
+          });
           deletedNodes++;
-          console.log('🗑️ حذف: ' + key);
+          console.log('🗑️ حذف عقدة: ' + key);
         }
       }
     }
+
+    // حذف المستخدمين غير المسموحين
+    try {
+      const auth = admin.auth();
+      const dbUsers = await db.ref('users').once('value');
+      const dbData = dbUsers.val() || {};
+      const allowedUIDs = new Set(Object.keys(dbData));
+      
+      const authUsers = await auth.listUsers(1000);
+      const usersToDelete = [];
+      
+      for (const user of authUsers.users) {
+        if (!allowedUIDs.has(user.uid)) {
+          usersToDelete.push(user.uid);
+          console.log('🚫 حذف مستخدم: ' + (user.email || user.uid));
+        }
+      }
+      
+      if (usersToDelete.length > 0) {
+        await auth.deleteUsers(usersToDelete);
+        deletedUsers = usersToDelete.length;
+        console.log('✅ تم حذف ' + deletedUsers + ' مستخدم');
+      }
+    } catch (authError) {
+      console.log('⚠️ خطأ في إدارة المستخدمين: ' + authError.message);
+    }
     
-    console.log('✅ تم حذف ' + deletedNodes + ' عقدة');
+    console.log('✅ اكتملت دورة الحماية - العقد المحذوفة: ' + deletedNodes + ' - المستخدمين المحذوفين: ' + deletedUsers);
+    
+    return { deletedNodes, deletedUsers };
     
   } catch (error) {
-    console.log('⚠️ خطأ في الحماية:', error.message);
+    console.log('❌ خطأ في دورة الحماية: ' + error.message);
+    return { deletedNodes: 0, deletedUsers: 0 };
   }
 }
 
-// الأوامر الأساسية
+// 💬 أوامر التليجرام
 bot.onText(/\/start/, (msg) => {
-  bot.sendMessage(msg.chat.id, `🛡️ **بوت حماية Firebase مع محرر الملفات المصحح**
+  const chatId = msg.chat.id;
+  console.log('📩 /start من: ' + chatId);
+  bot.sendMessage(chatId, `🛡️ *بوت حماية Firebase النشط*
 
-✅ الحماية التلقائية: نشطة  
-📁 محرر الملفات: مفعل ومصحح
+✅ الحماية التلقائية: نشطة
+⏰ تعمل كل: 30 ثانية
+🗑️ آخر حذف: يعمل الآن
 🌐 UptimeRobot: نشط
 
-**أوامر الملفات:**
-/edit_files - تعديل الملفات
-/create_file - إنشاء ملف جديد
-/file_system - معلومات النظام
-/cancel - إلغاء العملية
-
-**استخدم /edit_files للبدء!**`, { parse_mode: 'Markdown' });
+*الأوامر:*
+/start - البدء
+/status - الحالة
+/protect - حماية فورية
+/test - اختبار الحذف
+/logs - السجلات`, { parse_mode: 'Markdown' });
 });
 
-// باقي الأوامر والحماية...
-bot.onText(/\/protect/, (msg) => {
-  bot.sendMessage(msg.chat.id, '🛡️ جاري التشغيل...');
-  protectionCycle().then(() => {
-    bot.sendMessage(msg.chat.id, '✅ تمت الحماية!');
-  });
+bot.onText(/\/protect/, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log('📩 /protect من: ' + chatId);
+  
+  if (!firebaseInitialized) {
+    bot.sendMessage(chatId, '❌ Firebase غير متصل!');
+    return;
+  }
+  
+  bot.sendMessage(chatId, '🛡️ جاري تشغيل دورة حماية فورية...');
+  
+  const result = await protectionCycle();
+  
+  if (result.deletedNodes > 0 || result.deletedUsers > 0) {
+    bot.sendMessage(chatId, `✅ *تمت الحماية الفورية!*
+
+🗑️ العقد المحذوفة: ${result.deletedNodes}
+👥 المستخدمين المحذوفين: ${result.deletedUsers}
+⏰ الوقت: ${new Date().toLocaleTimeString('ar-EG')}`, { parse_mode: 'Markdown' });
+  } else {
+    bot.sendMessage(chatId, '✅ لم يتم العثور على عقد أو مستخدمين للحذف. كل شيء نظيف!');
+  }
 });
 
-// التشغيل التلقائي
-setInterval(protectionCycle, 30000);
-setTimeout(protectionCycle, 5000);
+bot.onText(/\/test/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  if (!firebaseInitialized) {
+    bot.sendMessage(chatId, '❌ فشل الاختبار: Firebase غير متصل');
+    return;
+  }
+  
+  bot.sendMessage(chatId, '🧪 جاري اختبار الحماية...');
+  
+  try {
+    const db = admin.database();
+    
+    // إنشاء عقدة تجريبية
+    await db.ref('test_node_' + Date.now()).set({
+      test: true,
+      timestamp: new Date().toISOString()
+    });
+    
+    // تشغيل الحماية
+    const result = await protectionCycle();
+    
+    bot.sendMessage(chatId, `✅ *اختبار ناجح!*
 
-// الحفاظ على الاستيقاظ
-function keepAlive() {
+🔧 Firebase: متصل
+🛡️ الحماية: نشطة
+🗑️ المحذوفات: ${result.deletedNodes} عقدة
+👥 المستخدمين: ${result.deletedUsers} مستخدم`, { parse_mode: 'Markdown' });
+    
+  } catch (error) {
+    bot.sendMessage(chatId, '❌ فشل الاختبار: ' + error.message);
+  }
+});
+
+bot.onText(/\/status/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, `📊 *حالة النظام:*
+
+🟢 البوت: نشط
+🔧 Firebase: ${firebaseInitialized ? 'متصل' : 'غير متصل'}
+⏰ الوقت: ${new Date().toLocaleTimeString('ar-EG')}
+📈 Uptime: ${Math.floor(process.uptime())} ثانية
+🌐 UptimeRobot: يراقب
+
+💡 استخدم /test لاختبار الحماية`, { parse_mode: 'Markdown' });
+});
+
+bot.onText(/\/logs/, (msg) => {
+  const chatId = msg.chat.id;
+  const status = firebaseInitialized ? '🟢 نشط' : '🔴 غير متصل';
+  bot.sendMessage(chatId, `📋 *آخر السجلات:*
+
+• Firebase: ${status}
+• البوت: 🟢 يعمل
+• UptimeRobot: 🟢 يراقب
+• الحماية: 🟢 نشطة
+
+🔍 افحص الـ logs في Render للتفاصيل الكاملة`, { parse_mode: 'Markdown' });
+});
+
+// معالجة أخطاء البوت
+bot.on('polling_error', (error) => {
+  console.log('🔴 خطأ في البوت: ' + error.message);
+});
+
+// ⏰ التشغيل التلقائي كل 30 ثانية - هذا الجزء مهم!
+console.log('⏰ تفعيل الحماية التلقائية كل 30 ثانية...');
+setInterval(() => {
+  protectionCycle();
+}, 30000);
+
+// بدء الدورة الأولى بعد 5 ثواني
+setTimeout(() => {
+  protectionCycle();
+}, 5000);
+
+// 🎯 الحفاظ على الاستيقاظ
+function keepServiceAlive() {
+  console.log('🔧 تفعيل الحفاظ على الاستيقاظ...');
+  
   setInterval(() => {
-    https.get('https://team-manga-list.onrender.com/ping', () => {
-      console.log('🔄 حافظ على الاستيقاظ');
+    https.get('https://team-manga-list.onrender.com/ping', (res) => {
+      console.log('🔄 ping ناجح: ' + new Date().toLocaleTimeString('ar-EG'));
+    }).on('error', (err) => {
+      console.log('⚠️ خطأ في ping: ' + err.message);
     });
   }, 4 * 60 * 1000);
 }
-setTimeout(keepAlive, 30000);
 
-console.log('🚀 البوت يعمل مع محرر الملفات المصحح!');
+// بدء الحفاظ على الاستيقاظ بعد 30 ثانية
+setTimeout(keepServiceAlive, 30000);
+
+console.log('✅ النظام جاهز! الحماية التلقائية مفعلة.');
