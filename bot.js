@@ -81,30 +81,34 @@ const BAD_WORDS = [
     'انيك', 'انك', 'منيك', 'قحب', 'قحبة', 'قحبه', 'قحبو'
 ];
 
-// 🔍 دالة للكشف عن السب مع تحسينات
+// 🔍 دالة للكشف عن السب - الإصدار البسيط والفعال
 function containsBadWords(text) {
-    if (!text || typeof text !== 'string') return false;
+    if (!text || typeof text !== 'string') {
+        console.log('⚠️ نص غير صالح للفحص:', text);
+        return false;
+    }
     
-    const normalizedText = text
-        .normalize('NFD')
-        .replace(/[\u064B-\u065F]/g, '') // إزالة التشكيل
-        .toLowerCase();
+    console.log('🔍 فحص النص:', text);
     
-    return BAD_WORDS.some(word => {
-        const normalizedWord = word
-            .normalize('NFD')
-            .replace(/[\u064B-\u065F]/g, '')
-            .toLowerCase();
-        
-        // البحث عن الكلمة كاملة مع حدود الكلمة
-        const regex = new RegExp(`\\b${normalizedWord}\\b`, 'i');
-        return regex.test(normalizedText);
-    });
+    const lowerText = text.toLowerCase().trim();
+    
+    for (const word of BAD_WORDS) {
+        if (lowerText.includes(word.toLowerCase())) {
+            console.log(`🚨 اكتشاف كلمة مسيئة: "${word}" في النص: "${text}"`);
+            return true;
+        }
+    }
+    
+    console.log('✅ النص نظيف');
+    return false;
 }
 
 // 🗑️ دالة حذف التعليق/الرد مع تحديث العداد
 async function deleteOffensiveContent(commentKey, replyKey = null) {
-    if (!firebaseInitialized) return false;
+    if (!firebaseInitialized) {
+        console.log('❌ Firebase غير متصل - لا يمكن الحذف');
+        return false;
+    }
     
     try {
         const db = admin.database();
@@ -115,10 +119,13 @@ async function deleteOffensiveContent(commentKey, replyKey = null) {
             const commentSnapshot = await commentRef.once('value');
             const commentData = commentSnapshot.val();
             
-            if (commentData) {
+            if (commentData && commentData.reply && commentData.reply[replyKey]) {
                 // حساب عدد الردود المتبقية بعد الحذف
                 const currentReplies = commentData.reply || {};
                 const remainingReplies = Object.keys(currentReplies).length - 1;
+                
+                console.log(`🗑️ جاري حذف الرد: ${replyKey}`);
+                console.log(`📊 الردود قبل الحذف: ${Object.keys(currentReplies).length}, بعد الحذف: ${remainingReplies}`);
                 
                 // حذف الرد أولاً
                 await db.ref(`comments/${commentKey}/reply/${replyKey}`).remove();
@@ -130,9 +137,13 @@ async function deleteOffensiveContent(commentKey, replyKey = null) {
                 
                 console.log(`✅ تم حذف رد مسيء: ${replyKey} وتحديث العداد إلى: ${Math.max(0, remainingReplies)}`);
                 return true;
+            } else {
+                console.log('❌ الرد غير موجود أو تم حذفه مسبقاً');
+                return false;
             }
         } else {
             // إذا كان حذف تعليق رئيسي
+            console.log(`🗑️ جاري حذف التعليق: ${commentKey}`);
             await db.ref(`comments/${commentKey}`).remove();
             console.log(`✅ تم حذف تعليق مسيء: ${commentKey}`);
             return true;
@@ -188,15 +199,17 @@ function startCommentMonitoring() {
         const comment = snapshot.val();
         const commentKey = snapshot.key;
         
+        console.log(`📝 تعليق جديد: ${commentKey}`);
+        
         if (comment && comment.user_comment) {
             // فحص التعليق الرئيسي
             if (containsBadWords(comment.user_comment)) {
                 console.log(`🚨 اكتشاف سب في تعليق: ${commentKey}`);
-                await deleteOffensiveContent(commentKey);
-                await addUserWarning(comment.user_id);
-                
-                // إرسال تنبيه للتليجرام
-                sendTelegramAlert(`🚨 تم حذف تعليق مسيء\n👤 المستخدم: ${comment.user_name}\n📝 التعليق: ${comment.user_comment.substring(0, 100)}...`);
+                const deleteResult = await deleteOffensiveContent(commentKey);
+                if (deleteResult) {
+                    await addUserWarning(comment.user_id);
+                    sendTelegramAlert(`🚨 تم حذف تعليق مسيء\n👤 المستخدم: ${comment.user_name}\n📝 التعليق: ${comment.user_comment.substring(0, 100)}...`);
+                }
             }
         }
     });
@@ -206,17 +219,44 @@ function startCommentMonitoring() {
         const comment = snapshot.val();
         const commentKey = snapshot.key;
         
+        console.log(`🔄 تحديث في التعليق: ${commentKey}`);
+        
         if (comment && comment.reply) {
             // فحص الردود الجديدة
             for (const replyKey in comment.reply) {
                 const reply = comment.reply[replyKey];
+                if (reply && reply.text_rep) {
+                    console.log(`💬 فحص الرد: ${replyKey} - النص: ${reply.text_rep}`);
+                    if (containsBadWords(reply.text_rep)) {
+                        console.log(`🚨 اكتشاف سب في رد: ${replyKey}`);
+                        const deleteResult = await deleteOffensiveContent(commentKey, replyKey);
+                        if (deleteResult) {
+                            await addUserWarning(reply.user_id);
+                            sendTelegramAlert(`🚨 تم حذف رد مسيء\n👤 المستخدم: ${reply.user_name}\n📝 الرد: ${reply.text_rep.substring(0, 100)}...`);
+                        }
+                    }
+                }
+            }
+        }
+    });
+    
+    // مراقبة الردود المضافة مباشرة
+    commentsRef.on('child_added', async (snapshot) => {
+        const comment = snapshot.val();
+        const commentKey = snapshot.key;
+        
+        // فحص الردود الموجودة في التعليق الجديد
+        if (comment && comment.reply) {
+            console.log(`🔍 فحص الردود في التعليق الجديد: ${commentKey}`);
+            for (const replyKey in comment.reply) {
+                const reply = comment.reply[replyKey];
                 if (reply && reply.text_rep && containsBadWords(reply.text_rep)) {
-                    console.log(`🚨 اكتشاف سب في رد: ${replyKey}`);
-                    await deleteOffensiveContent(commentKey, replyKey);
-                    await addUserWarning(reply.user_id);
-                    
-                    // إرسال تنبيه للتليجرام
-                    sendTelegramAlert(`🚨 تم حذف رد مسيء\n👤 المستخدم: ${reply.user_name}\n📝 الرد: ${reply.text_rep.substring(0, 100)}...`);
+                    console.log(`🚨 اكتشاف سب في رد موجود: ${replyKey}`);
+                    const deleteResult = await deleteOffensiveContent(commentKey, replyKey);
+                    if (deleteResult) {
+                        await addUserWarning(reply.user_id);
+                        sendTelegramAlert(`🚨 تم حذف رد مسيء موجود\n👤 المستخدم: ${reply.user_name}\n📝 الرد: ${reply.text_rep.substring(0, 100)}...`);
+                    }
                 }
             }
         }
@@ -231,6 +271,8 @@ function sendTelegramAlert(message) {
         bot.sendMessage(adminChatId, message).catch(error => {
             console.log('⚠️ خطأ في إرسال التنبيه: ' + error.message);
         });
+    } else {
+        console.log('⚠️ ADMIN_CHAT_ID غير محدد - لا يمكن إرسال التنبيهات');
     }
 }
 
@@ -239,7 +281,7 @@ async function scanExistingComments() {
     if (!firebaseInitialized) return;
     
     try {
-        console.log('🔍 فحص التعليقات الحالية...');
+        console.log('🔍 بدء فحص التعليقات الحالية...');
         const db = admin.database();
         const snapshot = await db.ref('comments').once('value');
         const comments = snapshot.val();
@@ -247,28 +289,39 @@ async function scanExistingComments() {
         let deletedCount = 0;
         
         if (comments) {
+            console.log(`📊 عدد التعليقات للفحص: ${Object.keys(comments).length}`);
+            
             for (const commentKey in comments) {
                 const comment = comments[commentKey];
                 
                 // فحص التعليق الرئيسي
                 if (comment.user_comment && containsBadWords(comment.user_comment)) {
-                    await deleteOffensiveContent(commentKey);
-                    await addUserWarning(comment.user_id);
-                    deletedCount++;
+                    console.log(`🚨 حذف تعليق رئيسي: ${commentKey}`);
+                    const deleteResult = await deleteOffensiveContent(commentKey);
+                    if (deleteResult) {
+                        await addUserWarning(comment.user_id);
+                        deletedCount++;
+                    }
                 }
                 
                 // فحص الردود
                 if (comment.reply) {
+                    console.log(`🔍 فحص ${Object.keys(comment.reply).length} رد في التعليق: ${commentKey}`);
                     for (const replyKey in comment.reply) {
                         const reply = comment.reply[replyKey];
                         if (reply.text_rep && containsBadWords(reply.text_rep)) {
-                            await deleteOffensiveContent(commentKey, replyKey);
-                            await addUserWarning(reply.user_id);
-                            deletedCount++;
+                            console.log(`🚨 حذف رد: ${replyKey}`);
+                            const deleteResult = await deleteOffensiveContent(commentKey, replyKey);
+                            if (deleteResult) {
+                                await addUserWarning(reply.user_id);
+                                deletedCount++;
+                            }
                         }
                     }
                 }
             }
+        } else {
+            console.log('📭 لا توجد تعليقات للفحص');
         }
         
         console.log(`✅ اكتمل الفحص - تم حذف ${deletedCount} محتوى مسيء`);
@@ -364,9 +417,24 @@ bot.onText(/\/start/, (msg) => {
 /scan_comments - فحص التعليقات
 /moderation_stats - إحصائيات الإشراف
 /user_warnings [user_id] - تحذيرات مستخدم
-/badwords_list - عرض الكلمات الممنوعة`, { parse_mode: 'Markdown' });
+/badwords_list - عرض الكلمات الممنوعة
+/test_filter [نص] - اختبار الفلتر`, { parse_mode: 'Markdown' });
 });
 
+bot.onText(/\/test_filter (.+)/, (msg, match) => {
+    const chatId = msg.chat.id;
+    const text = match[1];
+    
+    const hasBadWords = containsBadWords(text);
+    
+    if (hasBadWords) {
+        bot.sendMessage(chatId, `🚨 *تم اكتشاف كلمات مسيئة!*\n\nالنص: ${text}\n\nسيتم حذف هذا النص تلقائياً.`, { parse_mode: 'Markdown' });
+    } else {
+        bot.sendMessage(chatId, `✅ *النص نظيف*\n\nالنص: ${text}\n\nلا توجد كلمات مسيئة.`, { parse_mode: 'Markdown' });
+    }
+});
+
+// باقي الأوامر تبقى كما هي...
 bot.onText(/\/protect/, async (msg) => {
   const chatId = msg.chat.id;
   console.log('📩 /protect من: ' + chatId);
@@ -543,7 +611,7 @@ bot.onText(/\/moderation_stats/, async (msg) => {
 // أمر عرض الكلمات الممنوعة
 bot.onText(/\/badwords_list/, (msg) => {
     const chatId = msg.chat.id;
-    const wordsList = BAD_WORDS.slice(0, 50).join(', '); // عرض أول 50 كلمة فقط
+    const wordsList = BAD_WORDS.slice(0, 50).join(', ');
     bot.sendMessage(chatId, `📋 *الكلمات الممنوعة:*\n\n${wordsList}${BAD_WORDS.length > 50 ? '\n\n...وغيرها' : ''}`, { parse_mode: 'Markdown' });
 });
 
