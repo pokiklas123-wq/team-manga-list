@@ -70,38 +70,73 @@ try {
 // 🛡️ كود الحماية الأساسي
 const ALLOWED_NODES = ['users', 'comments', 'views', 'update'];
 
-// 📋 قائمة كلمات السب (الفاحشة والمهينة فقط)
+// 📋 قائمة كلمات السب المحسنة (الفاحشة فقط)
 const BAD_WORDS = [
     'كس', 'عرص', 'قحبة', 'شرموطة', 'زق', 'طيز', 'كسم', 'منيوك', 
-    'ابن الكلب', 'ابن الشرموطة', 'كلب', 'حمار', 'خول', 'فاجر',
-    'عاهر', 'دعارة', 'شرموط', 'قحاب', 'زبالة', 'خايب', 'خاينة',
-    'شراميط', 'قحبه', 'كحبة', 'كحبه', 'زبي', 'قضيب', 'مهبل', 'فرج',
-    'منيوك', 'منيوكة', 'منيوكه', 'داشر', 'داشرة', 'داشرر', 'داعر',
-    'داعره', 'داعرر', 'سافل', 'سافلة', 'سافلل', 'سكس', 'sex', 'porn'
+    'ابن الكلب', 'ابن الشرموطة', 'خول', 'فاجر', 'عاهر', 'دعارة', 
+    'شرموط', 'قحاب', 'شراميط', 'قحبه', 'كحبة', 'كحبه', 'زبي', 
+    'قضيب', 'مهبل', 'فرج', 'منيوك', 'منيوكة', 'منيوكه', 'داشر', 
+    'داشرة', 'داشرر', 'داعر', 'داعره', 'داعرر', 'سافل', 'سافلة', 
+    'سافلل', 'سكس', 'sex', 'porn', 'نيك', 'نك', 'نكح', 'ناك', 
+    'انيك', 'انك', 'منيك', 'قحب', 'قحبة', 'قحبه', 'قحبو'
 ];
 
-// 🔍 دالة للكشف عن السب
+// 🔍 دالة للكشف عن السب مع تحسينات
 function containsBadWords(text) {
-    if (!text) return false;
-    const lowerText = text.toLowerCase();
-    return BAD_WORDS.some(word => lowerText.includes(word.toLowerCase()));
+    if (!text || typeof text !== 'string') return false;
+    
+    const normalizedText = text
+        .normalize('NFD')
+        .replace(/[\u064B-\u065F]/g, '') // إزالة التشكيل
+        .toLowerCase();
+    
+    return BAD_WORDS.some(word => {
+        const normalizedWord = word
+            .normalize('NFD')
+            .replace(/[\u064B-\u065F]/g, '')
+            .toLowerCase();
+        
+        // البحث عن الكلمة كاملة مع حدود الكلمة
+        const regex = new RegExp(`\\b${normalizedWord}\\b`, 'i');
+        return regex.test(normalizedText);
+    });
 }
 
-// 🗑️ دالة حذف التعليق/الرد
+// 🗑️ دالة حذف التعليق/الرد مع تحديث العداد
 async function deleteOffensiveContent(commentKey, replyKey = null) {
     if (!firebaseInitialized) return false;
     
     try {
         const db = admin.database();
-        let path = `comments/${commentKey}`;
         
         if (replyKey) {
-            path += `/reply/${replyKey}`;
+            // إذا كان حذف رد، نحتاج لتحديث العداد أولاً
+            const commentRef = db.ref(`comments/${commentKey}`);
+            const commentSnapshot = await commentRef.once('value');
+            const commentData = commentSnapshot.val();
+            
+            if (commentData) {
+                // حساب عدد الردود المتبقية بعد الحذف
+                const currentReplies = commentData.reply || {};
+                const remainingReplies = Object.keys(currentReplies).length - 1;
+                
+                // حذف الرد أولاً
+                await db.ref(`comments/${commentKey}/reply/${replyKey}`).remove();
+                
+                // ثم تحديث العداد
+                await commentRef.update({
+                    user_all_rep: Math.max(0, remainingReplies).toString()
+                });
+                
+                console.log(`✅ تم حذف رد مسيء: ${replyKey} وتحديث العداد إلى: ${Math.max(0, remainingReplies)}`);
+                return true;
+            }
+        } else {
+            // إذا كان حذف تعليق رئيسي
+            await db.ref(`comments/${commentKey}`).remove();
+            console.log(`✅ تم حذف تعليق مسيء: ${commentKey}`);
+            return true;
         }
-        
-        await db.ref(path).remove();
-        console.log(`✅ تم حذف محتوى مسيء: ${path}`);
-        return true;
     } catch (error) {
         console.log('❌ خطأ في حذف المحتوى: ' + error.message);
         return false;
@@ -328,7 +363,8 @@ bot.onText(/\/start/, (msg) => {
 /logs - السجلات
 /scan_comments - فحص التعليقات
 /moderation_stats - إحصائيات الإشراف
-/user_warnings [user_id] - تحذيرات مستخدم`, { parse_mode: 'Markdown' });
+/user_warnings [user_id] - تحذيرات مستخدم
+/badwords_list - عرض الكلمات الممنوعة`, { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/protect/, async (msg) => {
@@ -502,6 +538,13 @@ bot.onText(/\/moderation_stats/, async (msg) => {
     } catch (error) {
         bot.sendMessage(chatId, '❌ خطأ في جلب الإحصائيات: ' + error.message);
     }
+});
+
+// أمر عرض الكلمات الممنوعة
+bot.onText(/\/badwords_list/, (msg) => {
+    const chatId = msg.chat.id;
+    const wordsList = BAD_WORDS.slice(0, 50).join(', '); // عرض أول 50 كلمة فقط
+    bot.sendMessage(chatId, `📋 *الكلمات الممنوعة:*\n\n${wordsList}${BAD_WORDS.length > 50 ? '\n\n...وغيرها' : ''}`, { parse_mode: 'Markdown' });
 });
 
 // معالجة أخطاء البوت
