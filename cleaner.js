@@ -1,86 +1,68 @@
 const admin = require('firebase-admin');
 
-console.log('🚀 بدء تشغيل بوت التنظيف...');
+// نفس الكود السابق ولكن باستخدام environment variables
+const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG);
 
-try {
-  const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG);
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+  databaseURL: "https://manga-arabic-default-rtdb.europe-west1.firebasedatabase.app"
+});
+
+const db = admin.database();
+const auth = admin.auth();
+const ALLOWED_NODES = ['users', 'comments', 'views', 'update', 'info'];
+
+async function cleanDatabase() {
+  console.log('🔄 بدء دورة التنظيف...');
   
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: "https://manga-arabic-default-rtdb.europe-west1.firebasedatabase.app"
-  });
+  try {
+    let nodesDeleted = 0;
+    let usersDeleted = 0;
 
-  const db = admin.database();
-  const auth = admin.auth();
-
-  const ALLOWED_NODES = ['users', 'comments', 'views', 'update', 'info'];
-
-  async function cleanDatabase() {
-    const startTime = new Date();
-    console.log(`🔍 بدء دورة التنظيف: ${startTime.toLocaleString('ar-EG')}`);
+    const snapshot = await db.ref('/').once('value');
+    const data = snapshot.val();
     
-    let totalDeleted = 0;
-
-    try {
-      // 1. تنظيف العقد غير المسموح بها
-      const snapshot = await db.ref('/').once('value');
-      const data = snapshot.val();
-      
-      if (data) {
-        for (const key in data) {
-          if (!ALLOWED_NODES.includes(key)) {
-            console.log(`🗑️ حذف العقدة: ${key}`);
-            await db.ref(key).remove();
-            totalDeleted++;
-          }
+    if (data) {
+      for (const key in data) {
+        if (!ALLOWED_NODES.includes(key)) {
+          console.log(`🗑️ حذف العقدة: ${key}`);
+          await db.ref(key).remove();
+          nodesDeleted++;
         }
       }
-
-      // 2. تنظيف المستخدمين الوهميين
-      const dbUsersSnap = await db.ref('users').once('value');
-      const dbUsers = dbUsersSnap.val() || {};
-      const allowedUids = Object.keys(dbUsers);
-
-      let authDeletedCount = 0;
-      let nextPageToken;
-      
-      do {
-        const listUsersResult = await auth.listUsers(1000, nextPageToken);
-        const authUsers = listUsersResult.users;
-        nextPageToken = listUsersResult.pageToken;
-
-        for (const user of authUsers) {
-          if (!allowedUids.includes(user.uid)) {
-            console.log(`🚫 حذف مستخدم: ${user.email || user.uid}`);
-            await auth.deleteUser(user.uid).catch((error) => {
-              console.error(`⚠️ خطأ في الحذف: ${error.message}`);
-            });
-            authDeletedCount++;
-            totalDeleted++;
-          }
-        }
-      } while (nextPageToken);
-
-      const endTime = new Date();
-      const duration = (endTime - startTime) / 1000;
-      
-      console.log(`📊 إحصائيات التنظيف:`);
-      console.log(`   - العقد المحذوفة: ${totalDeleted - authDeletedCount}`);
-      console.log(`   - المستخدمين المحذوفين: ${authDeletedCount}`);
-      console.log(`   - الإجمالي: ${totalDeleted}`);
-      console.log(`   - المدة: ${duration} ثانية`);
-      console.log(`🎉 اكتملت دورة التنظيف بنجاح!`);
-      console.log(`⏰ الدورة القادمة: بعد دقيقة`);
-
-    } catch (error) {
-      console.error("❌ خطأ أثناء التنظيف:", error.message);
     }
-  }
 
-  // تشغيل وظيفة التنظيف
-  await cleanDatabase();
-  
-} catch (error) {
-  console.error('💥 خطأ فادح:', error.message);
-  process.exit(1);
+    const dbUsersSnap = await db.ref('users').once('value');
+    const dbUsers = dbUsersSnap.val() || {};
+    const allowedUids = Object.keys(dbUsers);
+
+    let nextPageToken;
+    do {
+      const listUsersResult = await auth.listUsers(1000, nextPageToken);
+      const authUsers = listUsersResult.users;
+      nextPageToken = listUsersResult.pageToken;
+
+      for (const user of authUsers) {
+        if (!allowedUids.includes(user.uid)) {
+          console.log(`🚫 حذف مستخدم: ${user.email || user.uid}`);
+          await auth.deleteUser(user.uid).catch((error) => {
+            console.error(`⚠️ خطأ في الحذف: ${error.message}`);
+          });
+          usersDeleted++;
+        }
+      }
+    } while (nextPageToken);
+
+    console.log(`✅ اكتملت الدورة: ${nodesDeleted} عقدة, ${usersDeleted} مستخدم`);
+    return true;
+    
+  } catch (error) {
+    console.error('❌ خطأ:', error);
+    return false;
+  }
 }
+
+// التشغيل
+cleanDatabase().then(success => {
+  process.exit(success ? 0 : 1);
+});
