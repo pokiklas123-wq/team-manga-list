@@ -1,9 +1,9 @@
-name: Firebase Cleaner Bot
+name: Firebase Auto Cleaner
 
 on:
   schedule:
-    - cron: '*/1 * * * *'
-  workflow_dispatch:
+    - cron: '*/5 * * * *'  # كل 5 دقائق
+  workflow_dispatch:       # تشغيل يدوي
 
 jobs:
   clean:
@@ -19,10 +19,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm init -y
           npm install firebase-admin
 
       - name: Run cleaner script
-        env:
-          FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
         run: node cleaner.js
