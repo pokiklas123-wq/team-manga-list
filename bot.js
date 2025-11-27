@@ -139,6 +139,10 @@ bot.onText(/\/help/, (msg) => {
 🔧 البوت يحمي قاعدة البيانات تلقائياً كل 30 ثانية`);
 });
 
+
+
+
+
 // معالجة أخطاء البوت
 bot.on('polling_error', (error) => {
   console.log('🔴 خطأ في البوت:', error.message);
@@ -152,3 +156,29 @@ console.log('⏰ تم ضبط التشغيل التلقائي كل 30 ثانية'
 setTimeout(protectionCycle, 5000);
 
 console.log('✅ البوت جاهز للعمل!');
+
+
+
+// 🆕 كود الحفاظ على استيقاظ البوت
+const https = require('https');
+
+function keepServiceAlive() {
+    setInterval(() => {
+        const url = process.env.RENDER_URL || 'https://team-manga-list.onrender.com';
+        
+        https.get(url, (res) => {
+            console.log('🔄 حافظت على استيقاظ البوت: ' + new Date().toLocaleTimeString('ar-EG'));
+        }).on('error', (err) => {
+            console.log('⚠️ خطأ في الحفاظ على الاستيقاظ: ' + err.message);
+            
+            // محاولة بديلة
+            https.get('https://google.com', () => {
+                console.log('🔗 اتصال إنترنت نشط');
+            });
+        });
+    }, 10 * 60 * 1000); // كل 10 دقائق
+}
+
+// بدء الحفاظ على الاستيقاظ
+keepServiceAlive();
+console.log('⏰ تم تفعيل الحفاظ على الاستيقاظ كل 10 دقائق');
