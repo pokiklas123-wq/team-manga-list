@@ -67,8 +67,182 @@ try {
   console.log('❌ خطأ في Firebase:', firebaseError.message);
 }
 
-// 🛡️ كود الحماية الأساسي - هذا الجزء كان ناقصاً!
+// 🛡️ كود الحماية الأساسي
 const ALLOWED_NODES = ['users', 'comments', 'views', 'update'];
+
+// 📋 قائمة كلمات السب (الفاحشة والمهينة فقط)
+const BAD_WORDS = [
+    'كس', 'عرص', 'قحبة', 'شرموطة', 'زق', 'طيز', 'كسم', 'منيوك', 
+    'ابن الكلب', 'ابن الشرموطة', 'كلب', 'حمار', 'خول', 'فاجر',
+    'عاهر', 'دعارة', 'شرموط', 'قحاب', 'زبالة', 'خايب', 'خاينة',
+    'شراميط', 'قحبه', 'كحبة', 'كحبه', 'زبي', 'قضيب', 'مهبل', 'فرج',
+    'منيوك', 'منيوكة', 'منيوكه', 'داشر', 'داشرة', 'داشرر', 'داعر',
+    'داعره', 'داعرر', 'سافل', 'سافلة', 'سافلل', 'سكس', 'sex', 'porn'
+];
+
+// 🔍 دالة للكشف عن السب
+function containsBadWords(text) {
+    if (!text) return false;
+    const lowerText = text.toLowerCase();
+    return BAD_WORDS.some(word => lowerText.includes(word.toLowerCase()));
+}
+
+// 🗑️ دالة حذف التعليق/الرد
+async function deleteOffensiveContent(commentKey, replyKey = null) {
+    if (!firebaseInitialized) return false;
+    
+    try {
+        const db = admin.database();
+        let path = `comments/${commentKey}`;
+        
+        if (replyKey) {
+            path += `/reply/${replyKey}`;
+        }
+        
+        await db.ref(path).remove();
+        console.log(`✅ تم حذف محتوى مسيء: ${path}`);
+        return true;
+    } catch (error) {
+        console.log('❌ خطأ في حذف المحتوى: ' + error.message);
+        return false;
+    }
+}
+
+// ⚠️ دالة إضافة تحذير للمستخدم
+async function addUserWarning(userId) {
+    if (!firebaseInitialized) return false;
+    
+    try {
+        const db = admin.database();
+        const userRef = db.ref(`users/${userId}`);
+        
+        // جلب البيانات الحالية
+        const snapshot = await userRef.once('value');
+        const userData = snapshot.val() || {};
+        
+        // تحديث عدد التحذيرات
+        const currentWarnings = parseInt(userData.warning_comment) || 0;
+        const newWarnings = currentWarnings + 1;
+        
+        await userRef.update({
+            warning_comment: newWarnings.toString(),
+            last_warning: new Date().getTime().toString()
+        });
+        
+        console.log(`⚠️ تم إضافة تحذير للمستخدم ${userId} - الإجمالي: ${newWarnings}`);
+        return newWarnings;
+    } catch (error) {
+        console.log('❌ خطأ في إضافة تحذير: ' + error.message);
+        return false;
+    }
+}
+
+// 🔄 نظام المراقبة التلقائية
+function startCommentMonitoring() {
+    if (!firebaseInitialized) {
+        console.log('❌ Firebase غير متصل - تعطيل المراقبة');
+        return;
+    }
+    
+    console.log('🛡️ بدء مراقبة التعليقات والردود...');
+    const db = admin.database();
+    
+    // مراقبة التعليقات الجديدة
+    const commentsRef = db.ref('comments');
+    commentsRef.on('child_added', async (snapshot) => {
+        const comment = snapshot.val();
+        const commentKey = snapshot.key;
+        
+        if (comment && comment.user_comment) {
+            // فحص التعليق الرئيسي
+            if (containsBadWords(comment.user_comment)) {
+                console.log(`🚨 اكتشاف سب في تعليق: ${commentKey}`);
+                await deleteOffensiveContent(commentKey);
+                await addUserWarning(comment.user_id);
+                
+                // إرسال تنبيه للتليجرام
+                sendTelegramAlert(`🚨 تم حذف تعليق مسيء\n👤 المستخدم: ${comment.user_name}\n📝 التعليق: ${comment.user_comment.substring(0, 100)}...`);
+            }
+        }
+    });
+    
+    // مراقبة الردود الجديدة
+    commentsRef.on('child_changed', async (snapshot) => {
+        const comment = snapshot.val();
+        const commentKey = snapshot.key;
+        
+        if (comment && comment.reply) {
+            // فحص الردود الجديدة
+            for (const replyKey in comment.reply) {
+                const reply = comment.reply[replyKey];
+                if (reply && reply.text_rep && containsBadWords(reply.text_rep)) {
+                    console.log(`🚨 اكتشاف سب في رد: ${replyKey}`);
+                    await deleteOffensiveContent(commentKey, replyKey);
+                    await addUserWarning(reply.user_id);
+                    
+                    // إرسال تنبيه للتليجرام
+                    sendTelegramAlert(`🚨 تم حذف رد مسيء\n👤 المستخدم: ${reply.user_name}\n📝 الرد: ${reply.text_rep.substring(0, 100)}...`);
+                }
+            }
+        }
+    });
+}
+
+// 📨 دالة إرسال تنبيهات التليجرام
+function sendTelegramAlert(message) {
+    const adminChatId = process.env.ADMIN_CHAT_ID;
+    
+    if (adminChatId) {
+        bot.sendMessage(adminChatId, message).catch(error => {
+            console.log('⚠️ خطأ في إرسال التنبيه: ' + error.message);
+        });
+    }
+}
+
+// 🔍 دورة فحص التعليقات الحالية
+async function scanExistingComments() {
+    if (!firebaseInitialized) return;
+    
+    try {
+        console.log('🔍 فحص التعليقات الحالية...');
+        const db = admin.database();
+        const snapshot = await db.ref('comments').once('value');
+        const comments = snapshot.val();
+        
+        let deletedCount = 0;
+        
+        if (comments) {
+            for (const commentKey in comments) {
+                const comment = comments[commentKey];
+                
+                // فحص التعليق الرئيسي
+                if (comment.user_comment && containsBadWords(comment.user_comment)) {
+                    await deleteOffensiveContent(commentKey);
+                    await addUserWarning(comment.user_id);
+                    deletedCount++;
+                }
+                
+                // فحص الردود
+                if (comment.reply) {
+                    for (const replyKey in comment.reply) {
+                        const reply = comment.reply[replyKey];
+                        if (reply.text_rep && containsBadWords(reply.text_rep)) {
+                            await deleteOffensiveContent(commentKey, replyKey);
+                            await addUserWarning(reply.user_id);
+                            deletedCount++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        console.log(`✅ اكتمل الفحص - تم حذف ${deletedCount} محتوى مسيء`);
+        return deletedCount;
+    } catch (error) {
+        console.log('❌ خطأ في فحص التعليقات: ' + error.message);
+        return 0;
+    }
+}
 
 async function protectionCycle() {
   if (!firebaseInitialized) {
@@ -144,13 +318,17 @@ bot.onText(/\/start/, (msg) => {
 ⏰ تعمل كل: 30 ثانية
 🗑️ آخر حذف: يعمل الآن
 🌐 UptimeRobot: نشط
+🛡️ مراقبة التعليقات: نشطة
 
 *الأوامر:*
 /start - البدء
 /status - الحالة
 /protect - حماية فورية
 /test - اختبار الحذف
-/logs - السجلات`, { parse_mode: 'Markdown' });
+/logs - السجلات
+/scan_comments - فحص التعليقات
+/moderation_stats - إحصائيات الإشراف
+/user_warnings [user_id] - تحذيرات مستخدم`, { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/protect/, async (msg) => {
@@ -220,6 +398,7 @@ bot.onText(/\/status/, (msg) => {
 ⏰ الوقت: ${new Date().toLocaleTimeString('ar-EG')}
 📈 Uptime: ${Math.floor(process.uptime())} ثانية
 🌐 UptimeRobot: يراقب
+🛡️ مراقبة التعليقات: نشطة
 
 💡 استخدم /test لاختبار الحماية`, { parse_mode: 'Markdown' });
 });
@@ -233,8 +412,96 @@ bot.onText(/\/logs/, (msg) => {
 • البوت: 🟢 يعمل
 • UptimeRobot: 🟢 يراقب
 • الحماية: 🟢 نشطة
+• مراقبة التعليقات: 🟢 نشطة
 
 🔍 افحص الـ logs في Render للتفاصيل الكاملة`, { parse_mode: 'Markdown' });
+});
+
+// أمر فحص التعليقات الحالية
+bot.onText(/\/scan_comments/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    if (!firebaseInitialized) {
+        bot.sendMessage(chatId, '❌ Firebase غير متصل!');
+        return;
+    }
+    
+    bot.sendMessage(chatId, '🔍 جاري فحص جميع التعليقات والردود...');
+    
+    const deletedCount = await scanExistingComments();
+    
+    bot.sendMessage(chatId, `✅ *تم الانتهاء من الفحص!*
+
+🗑️ المحتويات المحذوفة: ${deletedCount}
+🛡️ النظام جاهز للمراقبة التلقائية`, { parse_mode: 'Markdown' });
+});
+
+// أمر عرض تحذيرات مستخدم
+bot.onText(/\/user_warnings (.+)/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const userId = match[1];
+    
+    if (!firebaseInitialized) {
+        bot.sendMessage(chatId, '❌ Firebase غير متصل!');
+        return;
+    }
+    
+    try {
+        const db = admin.database();
+        const userRef = db.ref(`users/${userId}`);
+        const snapshot = await userRef.once('value');
+        const userData = snapshot.val();
+        
+        if (userData) {
+            const warnings = userData.warning_comment || '0';
+            bot.sendMessage(chatId, `👤 *معلومات المستخدم*
+            
+الاسم: ${userData.user_name}
+البريد: ${userData.user_email}
+عدد التحذيرات: ${warnings}
+الحالة: ${parseInt(warnings) >= 3 ? '🔴 خطير' : '🟢 جيدة'}`, { parse_mode: 'Markdown' });
+        } else {
+            bot.sendMessage(chatId, '❌ المستخدم غير موجود!');
+        }
+    } catch (error) {
+        bot.sendMessage(chatId, '❌ خطأ في جلب البيانات: ' + error.message);
+    }
+});
+
+// أمر عرض إحصائيات النظام
+bot.onText(/\/moderation_stats/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    if (!firebaseInitialized) {
+        bot.sendMessage(chatId, '❌ Firebase غير متصل!');
+        return;
+    }
+    
+    try {
+        const db = admin.database();
+        const usersSnapshot = await db.ref('users').once('value');
+        const users = usersSnapshot.val() || {};
+        
+        let totalWarnings = 0;
+        let warnedUsers = 0;
+        
+        Object.values(users).forEach(user => {
+            const warnings = parseInt(user.warning_comment) || 0;
+            if (warnings > 0) {
+                totalWarnings += warnings;
+                warnedUsers++;
+            }
+        });
+        
+        bot.sendMessage(chatId, `📊 *إحصائيات الإشراف*
+        
+👥 إجمالي المستخدمين: ${Object.keys(users).length}
+⚠️ المستخدمون المحذرون: ${warnedUsers}
+🚨 إجمالي التحذيرات: ${totalWarnings}
+🛡️ النظام: 🟢 نشط`, { parse_mode: 'Markdown' });
+    } catch (error) {
+        bot.sendMessage(chatId, '❌ خطأ في جلب الإحصائيات: ' + error.message);
+    }
 });
 
 // معالجة أخطاء البوت
@@ -242,7 +509,7 @@ bot.on('polling_error', (error) => {
   console.log('🔴 خطأ في البوت: ' + error.message);
 });
 
-// ⏰ التشغيل التلقائي كل 30 ثانية - هذا الجزء مهم!
+// ⏰ التشغيل التلقائي كل 30 ثانية
 console.log('⏰ تفعيل الحماية التلقائية كل 30 ثانية...');
 setInterval(() => {
   protectionCycle();
@@ -252,6 +519,15 @@ setInterval(() => {
 setTimeout(() => {
   protectionCycle();
 }, 5000);
+
+// تفعيل نظام مراقبة التعليقات بعد 10 ثواني من التشغيل
+setTimeout(() => {
+    startCommentMonitoring();
+    // فحص التعليقات الحالية بعد بدء التشغيل
+    setTimeout(() => {
+        scanExistingComments();
+    }, 15000);
+}, 10000);
 
 // 🎯 الحفاظ على الاستيقاظ
 function keepServiceAlive() {
@@ -269,4 +545,4 @@ function keepServiceAlive() {
 // بدء الحفاظ على الاستيقاظ بعد 30 ثانية
 setTimeout(keepServiceAlive, 30000);
 
-console.log('✅ النظام جاهز! الحماية التلقائية مفعلة.');
+console.log('✅ النظام جاهز! الحماية التلقائية ومراقبة التعليقات مفعلة.');
