@@ -45,6 +45,9 @@ if (!token) {
 const bot = new TelegramBot(token, { polling: true });
 console.log('✅ بوت التليجرام متصل');
 
+// 🔒 متغير للتحكم في حالة البوت
+let isBotPaused = false;
+
 // إعدادات النسخ الاحتياطي
 const BACKUP_CHANNEL_ID = '-1003424582714';
 const BACKUP_INTERVAL = 1 * 60 * 60 * 1000; // كل ساعة
@@ -101,6 +104,11 @@ const LINK_PATTERNS = [
 
 // 🔄 نظام النسخ الاحتياطي المحسن - ينسخ جميع العقد تلقائياً
 async function createBackup() {
+    if (isBotPaused) {
+        console.log('⏸️ البوت متوقف مؤقتاً - تخطي النسخ الاحتياطي');
+        return false;
+    }
+
     if (!firebaseInitialized) {
         console.log('❌ Firebase غير متصل - لا يمكن إنشاء نسخة احتياطية');
         return false;
@@ -236,6 +244,11 @@ function containsBadWordsOrLinks(text) {
 
 // 🗑️ دالة حذف التعليق/الرد مع تحديث العداد
 async function deleteOffensiveContent(commentKey, replyKey = null) {
+    if (isBotPaused) {
+        console.log('⏸️ البوت متوقف مؤقتاً - تخطي حذف المحتوى');
+        return false;
+    }
+
     if (!firebaseInitialized) {
         console.log('❌ Firebase غير متصل - لا يمكن الحذف');
         return false;
@@ -275,6 +288,11 @@ async function deleteOffensiveContent(commentKey, replyKey = null) {
 
 // ⚠️ دالة إضافة تحذير للمستخدم
 async function addUserWarning(userId) {
+    if (isBotPaused) {
+        console.log('⏸️ البوت متوقف مؤقتاً - تخطي إضافة تحذير');
+        return false;
+    }
+
     if (!firebaseInitialized) return false;
     
     try {
@@ -302,6 +320,11 @@ async function addUserWarning(userId) {
 
 // 🔄 نظام المراقبة التلقائية المحسن
 function startCommentMonitoring() {
+    if (isBotPaused) {
+        console.log('⏸️ البوت متوقف مؤقتاً - تعطيل المراقبة');
+        return;
+    }
+
     if (!firebaseInitialized) {
         console.log('❌ Firebase غير متصل - تعطيل المراقبة');
         return;
@@ -312,6 +335,8 @@ function startCommentMonitoring() {
     
     const commentsRef = db.ref('comments');
     commentsRef.on('child_added', async (snapshot) => {
+        if (isBotPaused) return;
+
         const comment = snapshot.val();
         const commentKey = snapshot.key;
         
@@ -332,6 +357,8 @@ function startCommentMonitoring() {
     let processingReplies = new Set();
     
     commentsRef.on('child_changed', async (snapshot) => {
+        if (isBotPaused) return;
+
         const comment = snapshot.val();
         const commentKey = snapshot.key;
         
@@ -369,6 +396,11 @@ function startCommentMonitoring() {
 
 // 📨 دالة إرسال تنبيهات التليجرام
 function sendTelegramAlert(message) {
+    if (isBotPaused) {
+        console.log('⏸️ البوت متوقف مؤقتاً - تخطي إرسال التنبيه');
+        return;
+    }
+
     const adminChatId = process.env.ADMIN_CHAT_ID;
     
     if (adminChatId) {
@@ -382,6 +414,11 @@ function sendTelegramAlert(message) {
 
 // 🔍 دورة فحص التعليقات الحالية
 async function scanExistingComments() {
+    if (isBotPaused) {
+        console.log('⏸️ البوت متوقف مؤقتاً - تخطي فحص التعليقات');
+        return 0;
+    }
+
     if (!firebaseInitialized) return;
     
     try {
@@ -429,6 +466,11 @@ async function scanExistingComments() {
 
 // 🛡️ دورة الحماية الرئيسية
 async function protectionCycle() {
+  if (isBotPaused) {
+    console.log('⏸️ البوت متوقف مؤقتاً - تخطي دورة الحماية');
+    return { deletedNodes: 0, deletedUsers: 0 };
+  }
+
   if (!firebaseInitialized) {
     console.log('⏳ Firebase غير مهيئ، تخطي الدورة');
     return;
@@ -498,19 +540,19 @@ async function protectionCycle() {
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   console.log('📩 /start من: ' + chatId);
-  bot.sendMessage(chatId, `🛡️ *بوت حماية Firebase النشط*
+  
+  const botStatus = isBotPaused ? '⏸️ متوقف مؤقتاً' : '✅ نشط';
+  
+  bot.sendMessage(chatId, `🛡️ *بوت حماية Firebase - ${botStatus}*
 
-✅ الحماية التلقائية: نشطة
-⏰ تعمل كل: 1 ثانية
-🗑️ آخر حذف: يعمل الآن
-🌐 UptimeRobot: نشط
-🛡️ مراقبة التعليقات: نشطة
-🔗 كشف الروابط: نشط
-💾 النسخ الاحتياطي: نشط (كل ساعة)
+${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت يعمل بشكل طبيعي'}
 
-*الأوامر المتاحة:*
-/start - عرض هذه الرسالة
+*أوامر التحكم:*
+/pause - إيقاف مؤقت
+/resume - استئناف العمل
 /status - حالة النظام
+
+*الأوامر الأخرى:*
 /protect - تشغيل حماية فورية
 /backup - نسخ احتياطي فوري
 /test - اختبار النظام
@@ -522,19 +564,55 @@ bot.onText(/\/start/, (msg) => {
 /remove_word [كلمة] - إزالة كلمة ممنوعة`, { parse_mode: 'Markdown' });
 });
 
+// أمر /pause
+bot.onText(/\/pause/, (msg) => {
+  const chatId = msg.chat.id;
+  isBotPaused = true;
+  
+  console.log('⏸️ البوت متوقف مؤقتاً بواسطة: ' + chatId);
+  bot.sendMessage(chatId, 
+    '⏸️ *تم إيقاف البوت مؤقتاً*\n\n' +
+    '❌ الحماية متوقفة\n' +
+    '❌ مراقبة التعليقات متوقفة\n' +
+    '❌ النسخ الاحتياطي متوقف\n' +
+    '❌ فحص المحتوى متوقف\n\n' +
+    'استخدم /resume لاستئناف العمل', 
+    { parse_mode: 'Markdown' }
+  );
+});
+
+// أمر /resume
+bot.onText(/\/resume/, (msg) => {
+  const chatId = msg.chat.id;
+  isBotPaused = false;
+  
+  console.log('▶️ البوت يعمل مرة أخرى بواسطة: ' + chatId);
+  bot.sendMessage(chatId, 
+    '▶️ *تم استئناف عمل البوت*\n\n' +
+    '✅ الحماية نشطة\n' +
+    '✅ مراقبة التعليقات نشطة\n' +
+    '✅ النسخ الاحتياطي نشط\n' +
+    '✅ فحص المحتوى نشط\n\n' +
+    'جميع الأنظمة تعمل بشكل طبيعي', 
+    { parse_mode: 'Markdown' }
+  );
+});
+
 // أمر /status
 bot.onText(/\/status/, (msg) => {
   const chatId = msg.chat.id;
   const status = firebaseInitialized ? '✅ متصل' : '❌ غير متصل';
+  const botStatus = isBotPaused ? '⏸️ متوقف مؤقتاً' : '✅ نشط';
   
   bot.sendMessage(chatId, 
     `📊 *حالة النظام*\n\n` +
+    `🤖 حالة البوت: ${botStatus}\n` +
     `🛡️ حماية Firebase: ${status}\n` +
     `⏰ وقت التشغيل: ${Math.floor(process.uptime())} ثانية\n` +
     `📅 آخر تحديث: ${new Date().toLocaleString('ar-EG')}\n` +
-    `⚡ سرعة الحماية: كل 1 ثانية\n` +
-    `💾 النسخ الاحتياطي: نشط كل ساعة\n` +
-    `🔍 مراقبة التعليقات: نشطة`,
+    `⚡ سرعة الحماية: ${isBotPaused ? 'متوقفة' : 'كل 1 ثانية'}\n` +
+    `💾 النسخ الاحتياطي: ${isBotPaused ? 'متوقف' : 'نشط كل ساعة'}\n` +
+    `🔍 مراقبة التعليقات: ${isBotPaused ? 'متوقفة' : 'نشطة'}`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -543,6 +621,11 @@ bot.onText(/\/status/, (msg) => {
 bot.onText(/\/protect/, async (msg) => {
   const chatId = msg.chat.id;
   
+  if (isBotPaused) {
+    bot.sendMessage(chatId, '⏸️ البوت متوقف مؤقتاً - استخدم /resume أولا');
+    return;
+  }
+
   if (!firebaseInitialized) {
     bot.sendMessage(chatId, '❌ Firebase غير متصل!');
     return;
@@ -567,6 +650,11 @@ bot.onText(/\/protect/, async (msg) => {
 bot.onText(/\/backup/, async (msg) => {
   const chatId = msg.chat.id;
   
+  if (isBotPaused) {
+    bot.sendMessage(chatId, '⏸️ البوت متوقف مؤقتاً - استخدم /resume أولا');
+    return;
+  }
+
   if (!firebaseInitialized) {
     bot.sendMessage(chatId, '❌ Firebase غير متصل!');
     return;
@@ -586,17 +674,26 @@ bot.onText(/\/backup/, async (msg) => {
 // أمر /test
 bot.onText(/\/test/, (msg) => {
   const chatId = msg.chat.id;
-  bot.sendMessage(chatId, '✅ البوت يعمل بشكل طبيعي!\n' +
-                         '🛡️ جميع أنظمة الحماية نشطة\n' +
-                         '💾 نظام النسخ الاحتياطي جاهز\n' +
-                         `⚡ سرعة الحماية: كل ثانية\n` +
-                         `⏰ وقت التشغيل: ${Math.floor(process.uptime())} ثانية`);
+  const botStatus = isBotPaused ? '⏸️ متوقف مؤقتاً' : '✅ نشط';
+  
+  bot.sendMessage(chatId, 
+    `${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت يعمل بشكل طبيعي!'}\n` +
+    '🛡️ جميع أنظمة الحماية جاهزة\n' +
+    '💾 نظام النسخ الاحتياطي جاهز\n' +
+    `⚡ سرعة الحماية: ${isBotPaused ? 'متوقفة' : 'كل ثانية'}\n` +
+    `⏰ وقت التشغيل: ${Math.floor(process.uptime())} ثانية`
+  );
 });
 
 // أمر /scan_comments
 bot.onText(/\/scan_comments/, async (msg) => {
   const chatId = msg.chat.id;
   
+  if (isBotPaused) {
+    bot.sendMessage(chatId, '⏸️ البوت متوقف مؤقتاً - استخدم /resume أولا');
+    return;
+  }
+
   if (!firebaseInitialized) {
     bot.sendMessage(chatId, '❌ Firebase غير متصل!');
     return;
