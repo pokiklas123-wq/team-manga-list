@@ -591,7 +591,7 @@ bot.on('polling_error', (error) => {
 console.log('⏰ تفعيل الحماية التلقائية كل 30 ثانية...');
 setInterval(() => {
   protectionCycle();
-}, 5000);
+}, 1000);
 
 // بدء الدورة الأولى بعد 5 ثواني
 setTimeout(() => {
@@ -621,6 +621,6 @@ function keepServiceAlive() {
 }
 
 // بدء الحفاظ على الاستيقاظ بعد 30 ثانية
-setTimeout(keepServiceAlive, 5000);
+setTimeout(keepServiceAlive, 1000);
 
 console.log('✅ النظام جاهز! الحماية التلقائية ومراقبة التعليقات مفعلة.');
