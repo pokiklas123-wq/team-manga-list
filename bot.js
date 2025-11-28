@@ -46,8 +46,8 @@ const bot = new TelegramBot(token, { polling: true });
 console.log('✅ بوت التليجرام متصل');
 
 // إعدادات النسخ الاحتياطي
-const BACKUP_CHANNEL_ID = '-1003424582714'; // قناتك للنسخ الاحتياطي
-const BACKUP_INTERVAL = 6 * 60 * 60 * 1000; // كل 6 ساعات
+const BACKUP_CHANNEL_ID = '-1003424582714';
+const BACKUP_INTERVAL = 1 * 60 * 60 * 1000; // كل ساعة
 
 // تهيئة Firebase
 let firebaseInitialized = false;
@@ -74,7 +74,7 @@ try {
 // 🛡️ كود الحماية الأساسي
 const ALLOWED_NODES = ['users', 'comments', 'views', 'update'];
 
-// 📋 قائمة كلمات السب المحسنة (كلمات كاملة فقط)
+// 📋 قائمة كلمات السب المحسنة
 const BAD_WORDS = [
     'كس', 'عرص', 'قحبة', 'شرموطة', 'زق', 'طيز', 'كسم', 'منيوك', 
     'خول', 'فاجر', 'عاهر', 'دعارة', 'شرموط', 'قحاب', 'شراميط', 
@@ -86,20 +86,20 @@ const BAD_WORDS = [
 
 // 🛡️ نظام كشف الروابط المتقدم
 const LINK_PATTERNS = [
-    /https?:\/\/[^\s]+/g,                    // http:// أو https://
-    /www\.[^\s]+\.[^\s]+/g,                 // www.example.com
-    /[^\s]+\.[a-z]{2,}(\/[^\s]*)?/gi,       // domain.com أو domain.com/path
-    /t\.me\/[^\s]+/g,                       // روابط التلغرام
-    /bit\.ly\/[^\s]+/g,                     // روابط مختصرة
-    /youtu\.be\/[^\s]+/g,                   // روابط يوتيوب مختصرة
-    /youtube\.com\/[^\s]+/g,                // روابط يوتيوب
-    /instagram\.com\/[^\s]+/g,              // روابط انستجرام
-    /facebook\.com\/[^\s]+/g,               // روابط فيسبوك
-    /twitter\.com\/[^\s]+/g,                // روابط تويتر
-    /discord\.gg\/[^\s]+/g                  // روابط ديسكورد
+    /https?:\/\/[^\s]+/g,
+    /www\.[^\s]+\.[^\s]+/g,
+    /[^\s]+\.[a-z]{2,}(\/[^\s]*)?/gi,
+    /t\.me\/[^\s]+/g,
+    /bit\.ly\/[^\s]+/g,
+    /youtu\.be\/[^\s]+/g,
+    /youtube\.com\/[^\s]+/g,
+    /instagram\.com\/[^\s]+/g,
+    /facebook\.com\/[^\s]+/g,
+    /twitter\.com\/[^\s]+/g,
+    /discord\.gg\/[^\s]+/g
 ];
 
-// 🔄 نظام النسخ الاحتياطي المحسن
+// 🔄 نظام النسخ الاحتياطي المحسن - ينسخ جميع العقد تلقائياً
 async function createBackup() {
     if (!firebaseInitialized) {
         console.log('❌ Firebase غير متصل - لا يمكن إنشاء نسخة احتياطية');
@@ -107,98 +107,79 @@ async function createBackup() {
     }
 
     try {
-        console.log('💾 بدء إنشاء نسخة احتياطية...');
+        console.log('💾 بدء إنشاء نسخة احتياطية لجميع العقد...');
         const db = admin.database();
         
-        // جلب بيانات users و comments
-        const [usersSnapshot, commentsSnapshot] = await Promise.all([
-            db.ref('users').once('value'),
-            db.ref('comments').once('value')
-        ]);
+        // جلب جميع البيانات من الجذر الرئيسي
+        const snapshot = await db.ref('/').once('value');
+        const allData = snapshot.val() || {};
+        
+        // تصفية العقد المسموح بها
+        const filteredData = {};
+        let totalNodes = 0;
+        let totalRecords = 0;
 
-        const usersData = usersSnapshot.val() || {};
-        const commentsData = commentsSnapshot.val() || {};
+        for (const nodeName in allData) {
+            if (ALLOWED_NODES.includes(nodeName)) {
+                filteredData[nodeName] = allData[nodeName];
+                totalNodes++;
+                
+                if (allData[nodeName] && typeof allData[nodeName] === 'object') {
+                    totalRecords += Object.keys(allData[nodeName]).length;
+                }
+            }
+        }
 
-        // إحصائيات
+        // إحصائيات النسخ الاحتياطي
         const stats = {
-            totalUsers: Object.keys(usersData).length,
-            totalComments: Object.keys(commentsData).length,
-            totalReplies: 0,
-            backupTime: new Date().toLocaleString('ar-EG')
+            totalNodes: totalNodes,
+            totalRecords: totalRecords,
+            backupTime: new Date().toLocaleString('ar-EG'),
+            nodesList: Object.keys(filteredData)
         };
 
-        // حساب إجمالي الردود
-        for (const commentKey in commentsData) {
-            if (commentsData[commentKey].reply) {
-                stats.totalReplies += Object.keys(commentsData[commentKey].reply).length;
-            }
-        }
-
         // إنشاء نص النسخة الاحتياطية
-        let backupText = `💾 *نسخة احتياطية - ${stats.backupTime}*\n\n`;
+        let backupText = `💾 *نسخة احتياطية شاملة - ${stats.backupTime}*\n\n`;
         backupText += `📊 *الإحصائيات:*\n`;
-        backupText += `👥 المستخدمين: ${stats.totalUsers}\n`;
-        backupText += `💬 التعليقات: ${stats.totalComments}\n`;
-        backupText += `↪️ الردود: ${stats.totalReplies}\n\n`;
+        backupText += `📦 عدد العقد: ${stats.totalNodes}\n`;
+        backupText += `📝 إجمالي السجلات: ${stats.totalRecords}\n`;
+        backupText += `🕒 وقت النسخ: ${stats.backupTime}\n\n`;
 
-        // إضافة عينة من المستخدمين (أول 5)
-        backupText += `👥 *آخر المستخدمين:*\n`;
-        const userKeys = Object.keys(usersData).slice(0, 5);
-        userKeys.forEach((key, index) => {
-            const user = usersData[key];
-            backupText += `${index + 1}. ${user.user_name || 'بدون اسم'} (${key})\n`;
+        // إضافة قائمة بالعقد المنسوخة
+        backupText += `📁 *العقد المنسوخة:*\n`;
+        stats.nodesList.forEach((node, index) => {
+            const nodeData = filteredData[node];
+            const recordCount = nodeData && typeof nodeData === 'object' ? Object.keys(nodeData).length : 0;
+            backupText += `${index + 1}. ${node} (${recordCount} سجل)\n`;
         });
 
-        // إضافة عينة من التعليقات (أول 5)
-        backupText += `\n💬 *آخر التعليقات:*\n`;
-        const commentKeys = Object.keys(commentsData).slice(0, 5);
-        commentKeys.forEach((key, index) => {
-            const comment = commentsData[key];
-            backupText += `${index + 1}. ${comment.user_name}: ${(comment.user_comment || '').substring(0, 50)}...\n`;
-        });
-
-        // إرسال النسخة الاحتياطية إلى القناة
+        // إرسال النسخة النصية إلى القناة
         await bot.sendMessage(BACKUP_CHANNEL_ID, backupText, { parse_mode: 'Markdown' });
 
-        // إذا كانت البيانات كبيرة، نرسل ملف JSON كامل
-        if (stats.totalUsers > 0 || stats.totalComments > 0) {
-            const fullBackup = {
+        // إرسال ملف JSON كامل مع جميع البيانات
+        const fullBackup = {
+            metadata: {
                 backupTime: new Date().toISOString(),
-                statistics: stats,
-                users: usersData,
-                comments: commentsData
-            };
+                totalNodes: stats.totalNodes,
+                totalRecords: stats.totalRecords,
+                nodes: stats.nodesList
+            },
+            data: filteredData
+        };
 
-            // تحويل إلى JSON مع格式化
-            const jsonData = JSON.stringify(fullBackup, null, 2);
-            
-            // إرسال كملف إذا كان كبيراً
-            if (jsonData.length > 4000) {
-                await bot.sendDocument(BACKUP_CHANNEL_ID, Buffer.from(jsonData), {}, {
-                    filename: `backup-${Date.now()}.json`,
-                    contentType: 'application/json'
-                });
-            } else {
-                await bot.sendMessage(BACKUP_CHANNEL_ID, '```json\n' + jsonData + '\n```', { parse_mode: 'Markdown' });
-            }
-        }
+        const jsonData = JSON.stringify(fullBackup, null, 2);
+        const fileName = `backup-${Date.now()}.json`;
+        
+        await bot.sendDocument(BACKUP_CHANNEL_ID, Buffer.from(jsonData), {}, {
+            filename: fileName,
+            contentType: 'application/json'
+        });
 
-        console.log(`✅ تم إنشاء نسخة احتياطية وإرسالها إلى القناة: ${BACKUP_CHANNEL_ID}`);
+        console.log(`✅ تم إنشاء نسخة احتياطية لـ ${stats.totalNodes} عقدة`);
         return true;
 
     } catch (error) {
         console.log('❌ خطأ في إنشاء النسخة الاحتياطية:', error.message);
-        
-        // إرسال رسالة خطأ إلى القناة
-        try {
-            await bot.sendMessage(BACKUP_CHANNEL_ID, 
-                `❌ فشل في إنشاء النسخة الاحتياطية:\n${error.message}`,
-                { parse_mode: 'Markdown' }
-            );
-        } catch (e) {
-            console.log('⚠️ فشل في إرسال رسالة الخطأ:', e.message);
-        }
-        
         return false;
     }
 }
@@ -209,45 +190,33 @@ function containsLinks(text) {
         return false;
     }
     
-    console.log('🔗 فحص النص للروابط:', text);
-    
-    // فحص جميع أنماط الروابط
     for (const pattern of LINK_PATTERNS) {
         const matches = text.match(pattern);
         if (matches && matches.length > 0) {
-            console.log(`🚨 اكتشاف روابط: ${matches.join(', ')}`);
             return true;
         }
     }
     
-    // فحص الروابط المشفرة (URL encoded)
     if (text.includes('%2F%2F') || text.includes('http%3A')) {
-        console.log('🚨 اكتشاف روابط مشفرة');
         return true;
     }
     
-    console.log('✅ لا توجد روابط في النص');
     return false;
 }
 
-// 🔍 دالة للكشف عن السب - الإصدار المحسن
+// 🔍 دالة للكشف عن السب
 function containsBadWords(text) {
     if (!text || typeof text !== 'string') {
-        console.log('⚠️ نص غير صالح للفحص:', text);
         return false;
     }
-    
-    console.log('🔍 فحص النص:', text);
     
     const words = text.toLowerCase().split(/\s+/);
     let foundBadWord = null;
     
     for (const word of words) {
-        // فحص كل كلمة على حدة بشكل دقيق
         const cleanWord = word.replace(/[.,!?;:()]/g, '');
         
         for (const badWord of BAD_WORDS) {
-            // البحث عن تطابق كامل للكلمة
             if (cleanWord === badWord.toLowerCase()) {
                 foundBadWord = badWord;
                 break;
@@ -257,13 +226,7 @@ function containsBadWords(text) {
         if (foundBadWord) break;
     }
     
-    if (foundBadWord) {
-        console.log(`🚨 اكتشاف كلمة مسيئة: "${foundBadWord}" في النص: "${text}"`);
-        return true;
-    }
-    
-    console.log('✅ النص نظيف');
-    return false;
+    return foundBadWord !== null;
 }
 
 // 🛡️ دالة الفحص الرئيسية المحسنة
@@ -282,38 +245,26 @@ async function deleteOffensiveContent(commentKey, replyKey = null) {
         const db = admin.database();
         
         if (replyKey) {
-            // إذا كان حذف رد، نحتاج لتحديث العداد أولاً
             const commentRef = db.ref(`comments/${commentKey}`);
             const commentSnapshot = await commentRef.once('value');
             const commentData = commentSnapshot.val();
             
             if (commentData && commentData.reply && commentData.reply[replyKey]) {
-                // حساب عدد الردود المتبقية بعد الحذف
                 const currentReplies = commentData.reply || {};
                 const remainingReplies = Object.keys(currentReplies).length - 1;
                 
-                console.log(`🗑️ جاري حذف الرد: ${replyKey}`);
-                console.log(`📊 الردود قبل الحذف: ${Object.keys(currentReplies).length}, بعد الحذف: ${remainingReplies}`);
-                
-                // حذف الرد أولاً
                 await db.ref(`comments/${commentKey}/reply/${replyKey}`).remove();
                 
-                // ثم تحديث العداد
                 await commentRef.update({
                     user_all_rep: Math.max(0, remainingReplies).toString()
                 });
                 
-                console.log(`✅ تم حذف رد مسيء: ${replyKey} وتحديث العداد إلى: ${Math.max(0, remainingReplies)}`);
                 return true;
             } else {
-                console.log('❌ الرد غير موجود أو تم حذفه مسبقاً');
                 return false;
             }
         } else {
-            // إذا كان حذف تعليق رئيسي
-            console.log(`🗑️ جاري حذف التعليق: ${commentKey}`);
             await db.ref(`comments/${commentKey}`).remove();
-            console.log(`✅ تم حذف تعليق مسيء: ${commentKey}`);
             return true;
         }
     } catch (error) {
@@ -330,11 +281,9 @@ async function addUserWarning(userId) {
         const db = admin.database();
         const userRef = db.ref(`users/${userId}`);
         
-        // جلب البيانات الحالية
         const snapshot = await userRef.once('value');
         const userData = snapshot.val() || {};
         
-        // تحديث عدد التحذيرات
         const currentWarnings = parseInt(userData.warning_comment) || 0;
         const newWarnings = currentWarnings + 1;
         
@@ -361,7 +310,6 @@ function startCommentMonitoring() {
     console.log('🛡️ بدء مراقبة التعليقات والردود...');
     const db = admin.database();
     
-    // مراقبة التعليقات الجديدة
     const commentsRef = db.ref('comments');
     commentsRef.on('child_added', async (snapshot) => {
         const comment = snapshot.val();
@@ -370,7 +318,6 @@ function startCommentMonitoring() {
         console.log(`📝 تعليق جديد: ${commentKey}`);
         
         if (comment && comment.user_comment) {
-            // فحص التعليق الرئيسي
             if (containsBadWordsOrLinks(comment.user_comment)) {
                 console.log(`🚨 اكتشاف محتوى محظور في تعليق: ${commentKey}`);
                 const deleteResult = await deleteOffensiveContent(commentKey);
@@ -382,7 +329,6 @@ function startCommentMonitoring() {
         }
     });
     
-    // مراقبة الردود الجديدة - محسنة
     let processingReplies = new Set();
     
     commentsRef.on('child_changed', async (snapshot) => {
@@ -392,11 +338,9 @@ function startCommentMonitoring() {
         console.log(`🔄 تحديث في التعليق: ${commentKey}`);
         
         if (comment && comment.reply) {
-            // فحص الردود الجديدة فقط
             for (const replyKey in comment.reply) {
                 const reply = comment.reply[replyKey];
                 
-                // تجنب معالجة الرد نفسه مرتين
                 if (processingReplies.has(replyKey)) {
                     continue;
                 }
@@ -415,7 +359,6 @@ function startCommentMonitoring() {
                     }
                 }
                 
-                // إزالة الرد من مجموعة المعالجة بعد ثانية
                 setTimeout(() => {
                     processingReplies.delete(replyKey);
                 }, 1000);
@@ -450,14 +393,10 @@ async function scanExistingComments() {
         let deletedCount = 0;
         
         if (comments) {
-            console.log(`📊 عدد التعليقات للفحص: ${Object.keys(comments).length}`);
-            
             for (const commentKey in comments) {
                 const comment = comments[commentKey];
                 
-                // فحص التعليق الرئيسي
                 if (comment.user_comment && containsBadWordsOrLinks(comment.user_comment)) {
-                    console.log(`🚨 حذف تعليق رئيسي: ${commentKey}`);
                     const deleteResult = await deleteOffensiveContent(commentKey);
                     if (deleteResult) {
                         await addUserWarning(comment.user_id);
@@ -465,13 +404,10 @@ async function scanExistingComments() {
                     }
                 }
                 
-                // فحص الردود
                 if (comment.reply) {
-                    console.log(`🔍 فحص ${Object.keys(comment.reply).length} رد في التعليق: ${commentKey}`);
                     for (const replyKey in comment.reply) {
                         const reply = comment.reply[replyKey];
                         if (reply.text_rep && containsBadWordsOrLinks(reply.text_rep)) {
-                            console.log(`🚨 حذف رد: ${replyKey}`);
                             const deleteResult = await deleteOffensiveContent(commentKey, replyKey);
                             if (deleteResult) {
                                 await addUserWarning(reply.user_id);
@@ -481,8 +417,6 @@ async function scanExistingComments() {
                     }
                 }
             }
-        } else {
-            console.log('📭 لا توجد تعليقات للفحص');
         }
         
         console.log(`✅ اكتمل الفحص - تم حذف ${deletedCount} محتوى محظور`);
@@ -493,7 +427,7 @@ async function scanExistingComments() {
     }
 }
 
-// الأوامر والإعدادات الأخرى تبقى كما هي...
+// 🛡️ دورة الحماية الرئيسية
 async function protectionCycle() {
   if (!firebaseInitialized) {
     console.log('⏳ Firebase غير مهيئ، تخطي الدورة');
@@ -558,30 +492,29 @@ async function protectionCycle() {
   }
 }
 
-// 💬 أوامر التليجرام
+// 💬 أوامر التليجرام الكاملة
+
+// أمر /start
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   console.log('📩 /start من: ' + chatId);
   bot.sendMessage(chatId, `🛡️ *بوت حماية Firebase النشط*
 
 ✅ الحماية التلقائية: نشطة
-⏰ تعمل كل: 30 ثانية
+⏰ تعمل كل: 1 ثانية
 🗑️ آخر حذف: يعمل الآن
 🌐 UptimeRobot: نشط
 🛡️ مراقبة التعليقات: نشطة
 🔗 كشف الروابط: نشط
-💾 النسخ الاحتياطي: نشط (كل 6 ساعات)
+💾 النسخ الاحتياطي: نشط (كل ساعة)
 
-*الأوامر:*
-/start - البدء
-/status - الحالة
-/protect - حماية فورية
+*الأوامر المتاحة:*
+/start - عرض هذه الرسالة
+/status - حالة النظام
+/protect - تشغيل حماية فورية
 /backup - نسخ احتياطي فوري
-/test - اختبار الحذف
-/logs - السجلات
-/scan_comments - فحص التعليقات
-/moderation_stats - إحصائيات الإشراف
-/user_warnings [user_id] - تحذيرات مستخدم
+/test - اختبار النظام
+/scan_comments - فحص التعليقات الحالية
 /badwords_list - عرض الكلمات الممنوعة
 /test_filter [نص] - اختبار الفلتر
 /test_links [نص] - اختبار كشف الروابط
@@ -589,98 +522,24 @@ bot.onText(/\/start/, (msg) => {
 /remove_word [كلمة] - إزالة كلمة ممنوعة`, { parse_mode: 'Markdown' });
 });
 
-// أمر النسخ الاحتياطي الفوري
-bot.onText(/\/backup/, async (msg) => {
+// أمر /status
+bot.onText(/\/status/, (msg) => {
   const chatId = msg.chat.id;
+  const status = firebaseInitialized ? '✅ متصل' : '❌ غير متصل';
   
-  if (!firebaseInitialized) {
-    bot.sendMessage(chatId, '❌ Firebase غير متصل!');
-    return;
-  }
-  
-  bot.sendMessage(chatId, '💾 جاري إنشاء نسخة احتياطية فورية...');
-  
-  const success = await createBackup();
-  
-  if (success) {
-    bot.sendMessage(chatId, '✅ *تم إنشاء النسخة الاحتياطية وإرسالها إلى القناة!*\n\nسيتم إرسال نسخ تلقائية كل 6 ساعات.', { parse_mode: 'Markdown' });
-  } else {
-    bot.sendMessage(chatId, '❌ فشل في إنشاء النسخة الاحتياطية. راجع السجلات للتفاصيل.');
-  }
+  bot.sendMessage(chatId, 
+    `📊 *حالة النظام*\n\n` +
+    `🛡️ حماية Firebase: ${status}\n` +
+    `⏰ وقت التشغيل: ${Math.floor(process.uptime())} ثانية\n` +
+    `📅 آخر تحديث: ${new Date().toLocaleString('ar-EG')}\n` +
+    `⚡ سرعة الحماية: كل 1 ثانية\n` +
+    `💾 النسخ الاحتياطي: نشط كل ساعة\n` +
+    `🔍 مراقبة التعليقات: نشطة`,
+    { parse_mode: 'Markdown' }
+  );
 });
 
-// أوامر إدارة الكلمات الممنوعة
-bot.onText(/\/add_word (.+)/, (msg, match) => {
-    const chatId = msg.chat.id;
-    const word = match[1].trim();
-    
-    if (BAD_WORDS.includes(word)) {
-        bot.sendMessage(chatId, `⚠️ الكلمة "${word}" موجودة بالفعل في القائمة.`);
-    } else {
-        BAD_WORDS.push(word);
-        bot.sendMessage(chatId, `✅ تمت إضافة الكلمة "${word}" إلى القائمة الممنوعة.`);
-        console.log(`✅ تمت إضافة كلمة جديدة: ${word}`);
-    }
-});
-
-bot.onText(/\/remove_word (.+)/, (msg, match) => {
-    const chatId = msg.chat.id;
-    const word = match[1].trim();
-    
-    const index = BAD_WORDS.indexOf(word);
-    if (index === -1) {
-        bot.sendMessage(chatId, `❌ الكلمة "${word}" غير موجودة في القائمة.`);
-    } else {
-        BAD_WORDS.splice(index, 1);
-        bot.sendMessage(chatId, `✅ تمت إزالة الكلمة "${word}" من القائمة الممنوعة.`);
-        console.log(`✅ تمت إزالة كلمة: ${word}`);
-    }
-});
-
-bot.onText(/\/test_filter (.+)/, (msg, match) => {
-    const chatId = msg.chat.id;
-    const text = match[1];
-    
-    const hasBadWords = containsBadWords(text);
-    
-    if (hasBadWords) {
-        bot.sendMessage(chatId, `🚨 *تم اكتشاف كلمات مسيئة!*\n\nالنص: "${text}"\n\nسيتم حذف هذا النص تلقائياً.`, { parse_mode: 'Markdown' });
-    } else {
-        bot.sendMessage(chatId, `✅ *النص نظيف*\n\nالنص: "${text}"\n\nلا توجد كلمات مسيئة.`, { parse_mode: 'Markdown' });
-    }
-});
-
-// أمر اختبار كشف الروابط
-bot.onText(/\/test_links (.+)/, (msg, match) => {
-    const chatId = msg.chat.id;
-    const text = match[1];
-    
-    const hasLinks = containsLinks(text);
-    const hasBadWords = containsBadWords(text);
-    
-    let message = `📝 *نتيجة الفحص:*\n\nالنص: "${text}"\n\n`;
-    
-    if (hasLinks) {
-        message += "🚨 *تم اكتشاف روابط!*\n";
-    } else {
-        message += "✅ *لا توجد روابط*\n";
-    }
-    
-    if (hasBadWords) {
-        message += "🚨 *تم اكتشاف كلمات مسيئة!*\n";
-    } else {
-        message += "✅ *لا توجد كلمات مسيئة*\n";
-    }
-    
-    if (hasLinks || hasBadWords) {
-        message += "\n⚠️ سيتم حذف هذا المحتوى تلقائياً.";
-    } else {
-        message += "\n🎉 المحتوى آمن ومقبول.";
-    }
-    
-    bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-});
-
+// أمر /protect
 bot.onText(/\/protect/, async (msg) => {
   const chatId = msg.chat.id;
   
@@ -704,10 +563,131 @@ bot.onText(/\/protect/, async (msg) => {
   }
 });
 
+// أمر /backup
+bot.onText(/\/backup/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  if (!firebaseInitialized) {
+    bot.sendMessage(chatId, '❌ Firebase غير متصل!');
+    return;
+  }
+  
+  bot.sendMessage(chatId, '💾 جاري إنشاء نسخة احتياطية فورية...');
+  
+  const success = await createBackup();
+  
+  if (success) {
+    bot.sendMessage(chatId, '✅ *تم إنشاء النسخة الاحتياطية وإرسالها إلى القناة!*', { parse_mode: 'Markdown' });
+  } else {
+    bot.sendMessage(chatId, '❌ فشل في إنشاء النسخة الاحتياطية. راجع السجلات للتفاصيل.');
+  }
+});
+
+// أمر /test
+bot.onText(/\/test/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, '✅ البوت يعمل بشكل طبيعي!\n' +
+                         '🛡️ جميع أنظمة الحماية نشطة\n' +
+                         '💾 نظام النسخ الاحتياطي جاهز\n' +
+                         `⚡ سرعة الحماية: كل ثانية\n` +
+                         `⏰ وقت التشغيل: ${Math.floor(process.uptime())} ثانية`);
+});
+
+// أمر /scan_comments
+bot.onText(/\/scan_comments/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  if (!firebaseInitialized) {
+    bot.sendMessage(chatId, '❌ Firebase غير متصل!');
+    return;
+  }
+  
+  bot.sendMessage(chatId, '🔍 جاري فحص جميع التعليقات والردود...');
+  
+  const deletedCount = await scanExistingComments();
+  
+  bot.sendMessage(chatId, `✅ اكتمل الفحص\nتم حذف ${deletedCount} محتوى محظور`);
+});
+
+// أمر /badwords_list
 bot.onText(/\/badwords_list/, (msg) => {
-    const chatId = msg.chat.id;
-    const wordsList = BAD_WORDS.join(', ');
-    bot.sendMessage(chatId, `📋 *الكلمات الممنوعة:*\n\n${wordsList}`, { parse_mode: 'Markdown' });
+  const chatId = msg.chat.id;
+  const wordsList = BAD_WORDS.join(', ');
+  bot.sendMessage(chatId, `📋 *الكلمات الممنوعة:*\n\n${wordsList}`, { parse_mode: 'Markdown' });
+});
+
+// أمر /test_filter
+bot.onText(/\/test_filter (.+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const text = match[1];
+  
+  const hasBadWords = containsBadWords(text);
+  
+  if (hasBadWords) {
+    bot.sendMessage(chatId, `🚨 *تم اكتشاف كلمات مسيئة!*\n\nالنص: "${text}"\n\nسيتم حذف هذا النص تلقائياً.`, { parse_mode: 'Markdown' });
+  } else {
+    bot.sendMessage(chatId, `✅ *النص نظيف*\n\nالنص: "${text}"\n\nلا توجد كلمات مسيئة.`, { parse_mode: 'Markdown' });
+  }
+});
+
+// أمر /test_links
+bot.onText(/\/test_links (.+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const text = match[1];
+  
+  const hasLinks = containsLinks(text);
+  const hasBadWords = containsBadWords(text);
+  
+  let message = `📝 *نتيجة الفحص:*\n\nالنص: "${text}"\n\n`;
+  
+  if (hasLinks) {
+    message += "🚨 *تم اكتشاف روابط!*\n";
+  } else {
+    message += "✅ *لا توجد روابط*\n";
+  }
+  
+  if (hasBadWords) {
+    message += "🚨 *تم اكتشاف كلمات مسيئة!*\n";
+  } else {
+    message += "✅ *لا توجد كلمات مسيئة*\n";
+  }
+  
+  if (hasLinks || hasBadWords) {
+    message += "\n⚠️ سيتم حذف هذا المحتوى تلقائياً.";
+  } else {
+    message += "\n🎉 المحتوى آمن ومقبول.";
+  }
+  
+  bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+});
+
+// أمر /add_word
+bot.onText(/\/add_word (.+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const word = match[1].trim();
+  
+  if (BAD_WORDS.includes(word)) {
+    bot.sendMessage(chatId, `⚠️ الكلمة "${word}" موجودة بالفعل في القائمة.`);
+  } else {
+    BAD_WORDS.push(word);
+    bot.sendMessage(chatId, `✅ تمت إضافة الكلمة "${word}" إلى القائمة الممنوعة.`);
+    console.log(`✅ تمت إضافة كلمة جديدة: ${word}`);
+  }
+});
+
+// أمر /remove_word
+bot.onText(/\/remove_word (.+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const word = match[1].trim();
+  
+  const index = BAD_WORDS.indexOf(word);
+  if (index === -1) {
+    bot.sendMessage(chatId, `❌ الكلمة "${word}" غير موجودة في القائمة.`);
+  } else {
+    BAD_WORDS.splice(index, 1);
+    bot.sendMessage(chatId, `✅ تمت إزالة الكلمة "${word}" من القائمة الممنوعة.`);
+    console.log(`✅ تمت إزالة كلمة: ${word}`);
+  }
 });
 
 // معالجة أخطاء البوت
@@ -715,36 +695,43 @@ bot.on('polling_error', (error) => {
   console.log('🔴 خطأ في البوت: ' + error.message);
 });
 
-// ⏰ التشغيل التلقائي كل 1 ثانية
-console.log('⏰ تفعيل الحماية التلقائية كل 1 ثانية...');
-setInterval(() => {
-  protectionCycle();
-}, 1000);
+// ⚡ التشغيل التلقائي كل 1 ثانية - محسن
+console.log('⚡ تفعيل الحماية التلقائية كل 1 ثانية...');
 
-// بدء الدورة الأولى بعد 5 ثواني
-setTimeout(() => {
-  protectionCycle();
-}, 1000);
+function startProtectionCycle() {
+  setTimeout(async () => {
+    try {
+      await protectionCycle();
+    } catch (error) {
+      console.log('❌ خطأ في دورة الحماية: ' + error.message);
+    } finally {
+      // تشغيل الدورة التالية بعد ثانية واحدة من انتهاء الدورة الحالية
+      startProtectionCycle();
+    }
+  }, 1000); // 1 ثانية
+}
 
-// تفعيل نظام مراقبة التعليقات بعد 1 ثواني من التشغيل
+// بدء دورة الحماية
+startProtectionCycle();
+
+// تفعيل نظام مراقبة التعليقات بعد 5 ثواني من التشغيل
 setTimeout(() => {
     startCommentMonitoring();
-    // فحص التعليقات الحالية بعد بدء التشغيل
     setTimeout(() => {
         scanExistingComments();
-    }, 1000);
-}, 1000);
+    }, 3000);
+}, 5000);
 
 // 🕒 نظام النسخ الاحتياطي التلقائي
-console.log('💾 تفعيل النسخ الاحتياطي التلقائي كل 6 ساعات...');
+console.log('💾 تفعيل النسخ الاحتياطي التلقائي كل ساعة...');
 setInterval(() => {
     createBackup();
 }, BACKUP_INTERVAL);
 
-// بدء النسخ الاحتياطي الأول بعد دقيقة من التشغيل
+// بدء النسخ الاحتياطي الأول بعد 30 ثانية من التشغيل
 setTimeout(() => {
     createBackup();
-}, 60000);
+}, 30000);
 
 // 🎯 الحفاظ على الاستيقاظ
 function keepServiceAlive() {
@@ -759,7 +746,7 @@ function keepServiceAlive() {
   }, 4 * 60 * 1000);
 }
 
-// بدء الحفاظ على الاستيقاظ بعد 1 ثانية
-setTimeout(keepServiceAlive, 1000);
+// بدء الحفاظ على الاستيقاظ بعد 30 ثانية
+setTimeout(keepServiceAlive, 30000);
 
-console.log('✅ النظام جاهز! الحماية التلقائية ومراقبة التعليقات والنسخ الاحتياطي مفعلة.');
+console.log('✅ النظام جاهز! الحماية التلقائية تعمل كل ثانية وجميع الأوامر نشطة.');
