@@ -48,9 +48,9 @@ console.log('✅ بوت التليجرام متصل');
 // 🔒 متغير للتحكم في حالة البوت
 let isBotPaused = false;
 
-// إعدادات النسخ الاحتياطي
+// إعدادات النسخ الاحتياطي - تم التعديل إلى 24 ساعة
 const BACKUP_CHANNEL_ID = '-1003424582714';
-const BACKUP_INTERVAL = 1 * 60 * 60 * 1000; // كل ساعة
+const BACKUP_INTERVAL = 24 * 60 * 60 * 1000; // كل 24 ساعة بدلاً من كل ساعة
 
 // تهيئة Firebase
 let firebaseInitialized = false;
@@ -286,8 +286,8 @@ async function deleteOffensiveContent(commentKey, replyKey = null) {
     }
 }
 
-// ⚠️ دالة إضافة تحذير للمستخدم
-async function addUserWarning(userId) {
+// ⚠️ دالة إضافة تحذير للمستخدم - تم التعديل حسب الطلب
+async function addUserWarning(userId, commentData = null, replyData = null) {
     if (isBotPaused) {
         console.log('⏸️ البوت متوقف مؤقتاً - تخطي إضافة تحذير');
         return false;
@@ -305,12 +305,34 @@ async function addUserWarning(userId) {
         const currentWarnings = parseInt(userData.warning_comment) || 0;
         const newWarnings = currentWarnings + 1;
         
+        // تحديث العدد الإجمالي للتحذيرات
         await userRef.update({
             warning_comment: newWarnings.toString(),
             last_warning: new Date().getTime().toString()
         });
         
         console.log(`⚠️ تم إضافة تحذير للمستخدم ${userId} - الإجمالي: ${newWarnings}`);
+        
+        // إنشاء سجل تحذير مفصل إذا كان هناك بيانات تعليق/رد
+        if (commentData || replyData) {
+            const warningRef = db.ref(`users/${userId}/warning_comment_${newWarnings}`);
+            const warningData = {
+                timestamp: new Date().getTime().toString(),
+                chapter_id: commentData?.chapter_id || 'غير محدد'
+            };
+            
+            if (replyData) {
+                warningData.deleted_message = replyData.text_rep || '';
+                warningData.type = 'reply';
+            } else if (commentData) {
+                warningData.deleted_message = commentData.user_comment || '';
+                warningData.type = 'comment';
+            }
+            
+            await warningRef.set(warningData);
+            console.log(`📝 تم إنشاء سجل تحذير مفصل: warning_comment_${newWarnings}`);
+        }
+        
         return newWarnings;
     } catch (error) {
         console.log('❌ خطأ في إضافة تحذير: ' + error.message);
@@ -347,7 +369,7 @@ function startCommentMonitoring() {
                 console.log(`🚨 اكتشاف محتوى محظور في تعليق: ${commentKey}`);
                 const deleteResult = await deleteOffensiveContent(commentKey);
                 if (deleteResult) {
-                    await addUserWarning(comment.user_id);
+                    await addUserWarning(comment.user_id, comment, null);
                     sendTelegramAlert(`🚨 تم حذف تعليق محظور\n👤 المستخدم: ${comment.user_name}\n📝 التعليق: ${comment.user_comment.substring(0, 100)}...`);
                 }
             }
@@ -380,7 +402,7 @@ function startCommentMonitoring() {
                         console.log(`🚨 اكتشاف محتوى محظور في رد: ${replyKey}`);
                         const deleteResult = await deleteOffensiveContent(commentKey, replyKey);
                         if (deleteResult) {
-                            await addUserWarning(reply.user_id);
+                            await addUserWarning(reply.user_id, comment, reply);
                             sendTelegramAlert(`🚨 تم حذف رد محظور\n👤 المستخدم: ${reply.user_name}\n📝 الرد: ${reply.text_rep.substring(0, 100)}...`);
                         }
                     }
@@ -436,7 +458,7 @@ async function scanExistingComments() {
                 if (comment.user_comment && containsBadWordsOrLinks(comment.user_comment)) {
                     const deleteResult = await deleteOffensiveContent(commentKey);
                     if (deleteResult) {
-                        await addUserWarning(comment.user_id);
+                        await addUserWarning(comment.user_id, comment, null);
                         deletedCount++;
                     }
                 }
@@ -447,7 +469,7 @@ async function scanExistingComments() {
                         if (reply.text_rep && containsBadWordsOrLinks(reply.text_rep)) {
                             const deleteResult = await deleteOffensiveContent(commentKey, replyKey);
                             if (deleteResult) {
-                                await addUserWarning(reply.user_id);
+                                await addUserWarning(reply.user_id, comment, reply);
                                 deletedCount++;
                             }
                         }
@@ -611,7 +633,7 @@ bot.onText(/\/status/, (msg) => {
     `⏰ وقت التشغيل: ${Math.floor(process.uptime())} ثانية\n` +
     `📅 آخر تحديث: ${new Date().toLocaleString('ar-EG')}\n` +
     `⚡ سرعة الحماية: ${isBotPaused ? 'متوقفة' : 'كل 1 ثانية'}\n` +
-    `💾 النسخ الاحتياطي: ${isBotPaused ? 'متوقف' : 'نشط كل ساعة'}\n` +
+    `💾 النسخ الاحتياطي: ${isBotPaused ? 'متوقف' : 'نشط كل 24 ساعة'}\n` +
     `🔍 مراقبة التعليقات: ${isBotPaused ? 'متوقفة' : 'نشطة'}`,
     { parse_mode: 'Markdown' }
   );
@@ -817,18 +839,18 @@ setTimeout(() => {
     setTimeout(() => {
         scanExistingComments();
     }, 3000);
-}, 5000);
+}, 1000);
 
-// 🕒 نظام النسخ الاحتياطي التلقائي
-console.log('💾 تفعيل النسخ الاحتياطي التلقائي كل ساعة...');
+// 🕒 نظام النسخ الاحتياطي التلقائي - تم التعديل إلى 24 ساعة
+console.log('💾 تفعيل النسخ الاحتياطي التلقائي كل 24 ساعة...');
 setInterval(() => {
     createBackup();
 }, BACKUP_INTERVAL);
 
-// بدء النسخ الاحتياطي الأول بعد 30 ثانية من التشغيل
+// بدء النسخ الاحتياطي الأول بعد 1 ثانية من التشغيل
 setTimeout(() => {
     createBackup();
-}, 30000);
+}, 1000);
 
 // 🎯 الحفاظ على الاستيقاظ
 function keepServiceAlive() {
@@ -843,7 +865,7 @@ function keepServiceAlive() {
   }, 4 * 60 * 1000);
 }
 
-// بدء الحفاظ على الاستيقاظ بعد 30 ثانية
-setTimeout(keepServiceAlive, 30000);
+// بدء الحفاظ على الاستيقاظ بعد 1 ثانية
+setTimeout(keepServiceAlive, 1000);
 
 console.log('✅ النظام جاهز! الحماية التلقائية تعمل كل ثانية وجميع الأوامر نشطة.');
