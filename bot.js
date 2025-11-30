@@ -2,27 +2,20 @@ const TelegramBot = require('node-telegram-bot-api');
 const admin = require('firebase-admin');
 const express = require('express');
 const https = require('https');
-
-// 🔧 محاولة استيراد nodemailer بشكل آمن
-let nodemailer;
-try {
-  nodemailer = require('nodemailer');
-  console.log('✅ تم تحميل nodemailer بنجاح');
-} catch (error) {
-  console.log('❌ فشل في تحميل nodemailer:', error.message);
-  console.log('⚠️ سيتم تعطيل وظيفة الإيميلات');
-}
+const nodemailer = require('nodemailer');
 
 // 🔐 متغيرات تخزين بيانات Gmail
 let gmailConfig = {
-  email: 'riwayatisupoort@gmail.com',
-  password: 'dyzflvstiygrwnpz',
+  email: '',
+  password: '',
   isConfigured: false
 };
 
 // بدء خادم ويب لـ UptimeRobot
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
 
 // طرق UptimeRobot
 app.get('/', (req, res) => {
@@ -32,8 +25,7 @@ app.get('/', (req, res) => {
     service: 'Firebase Protection Bot',
     timestamp: new Date().toLocaleString('ar-EG'),
     uptime: Math.floor(process.uptime()) + ' seconds',
-    emailService: gmailConfig.isConfigured ? '✅ نشط' : '❌ غير نشط',
-    nodemailerLoaded: !!nodemailer
+    emailService: gmailConfig.isConfigured ? '✅ نشط' : '❌ غير نشط'
   });
 });
 
@@ -93,22 +85,14 @@ try {
   console.log('❌ خطأ في Firebase:', firebaseError.message);
 }
 
-// 📧 نظام إرسال الإيميلات المحسن
+// 📧 نظام إرسال الإيميلات
 async function sendNotificationEmail(userEmail, notificationData) {
-  if (!nodemailer) {
-    console.log('❌ nodemailer غير متوفر - تعطيل الإيميلات');
-    return false;
-  }
-
   if (!gmailConfig.isConfigured) {
     console.log('❌ نظام الإيميل غير مهيئ');
     return false;
   }
 
   try {
-    console.log(`📤 محاولة إرسال إيميل إلى: ${userEmail}`);
-    
-    // استخدام إعدادات أبسط
     const transporter = nodemailer.createTransporter({
       service: 'gmail',
       auth: {
@@ -117,7 +101,6 @@ async function sendNotificationEmail(userEmail, notificationData) {
       }
     });
 
-    // اختبار الاتصال أولاً
     await transporter.verify();
     console.log('✅ اتصال Gmail ناجح');
 
@@ -150,7 +133,7 @@ async function sendNotificationEmail(userEmail, notificationData) {
       to: userEmail,
       subject: `🔔 رد جديد على تعليقك - ${notificationData.user_name || 'مستخدم'}`,
       html: emailContent,
-      text: `إشعار جديد - تعليق على منشورك\n\nالمستخدم: ${notificationData.user_name}\nالرسالة: ${notificationData.reply}\nالوقت: ${new Date(parseInt(notificationData.updateAt)).toLocaleString('ar-EG')}`
+      text: `إشعار جديد - ${notificationData.user_name} رد على تعليقك: ${notificationData.reply}`
     };
 
     const result = await transporter.sendMail(mailOptions);
@@ -159,22 +142,11 @@ async function sendNotificationEmail(userEmail, notificationData) {
 
   } catch (error) {
     console.log('❌ خطأ في إرسال الإيميل:', error.message);
-    
-    // تحليل نوع الخطأ
-    if (error.code === 'EAUTH') {
-      console.log('🔐 خطأ في المصادقة - تحقق من كلمة السر');
-      console.log('💡 قد تحتاج إلى استخدام "كلمة سر التطبيقات" بدلاً من كلمة السر العادية');
-    } else if (error.code === 'ECONNECTION') {
-      console.log('🌐 خطأ في الاتصال بالإنترنت');
-    } else {
-      console.log('⚠️ خطأ غير معروف:', error);
-    }
-    
     return false;
   }
 }
 
-// 🔍 نظام مراقبة الإشعارات المبسط
+// 🔍 نظام مراقبة الإشعارات
 function startNotificationsMonitoring() {
   if (isBotPaused) {
     console.log('⏸️ البوت متوقف مؤقتاً - تعطيل مراقبة الإشعارات');
@@ -191,18 +163,11 @@ function startNotificationsMonitoring() {
     return;
   }
 
-  if (!nodemailer) {
-    console.log('❌ nodemailer غير متوفر - تعطيل مراقبة الإشعارات');
-    return;
-  }
-
   console.log('🔔 بدء مراقبة إشعارات المستخدمين...');
   const db = admin.database();
 
-  // متغير لتخزين الحالة السابقة لكل مستخدم
   const previousNotificationsState = new Map();
 
-  // المراقبة على مستوى كل مستخدم
   const usersRef = db.ref('users');
   
   usersRef.on('child_changed', async (userSnapshot) => {
@@ -211,86 +176,54 @@ function startNotificationsMonitoring() {
     const userId = userSnapshot.key;
     const userData = userSnapshot.val();
     
-    console.log(`🔍 فحص تحديثات للمستخدم: ${userId}`);
-    
     if (userData && userData.notifications_users) {
       const currentNotifications = userData.notifications_users;
       const userEmail = userData.user_email;
       
       if (!userEmail) {
-        console.log(`⚠️ المستخدم ${userId} لا يملك إيميل - تخطي الإشعارات`);
+        console.log(`⚠️ المستخدم ${userId} لا يملك إيميل`);
         return;
       }
 
-      // الحصول على الحالة السابقة لهذا المستخدم
       const previousNotifications = previousNotificationsState.get(userId) || {};
 
-      // اكتشاف الإشعارات الجديدة
       for (const notificationKey in currentNotifications) {
         if (!previousNotifications[notificationKey]) {
-          // هذا إشعار جديد
           const notification = currentNotifications[notificationKey];
-          console.log(`🔔 إشعار جديد للمستخدم: ${userId}`, {
-            user: notification.user_name,
-            reply: notification.reply?.substring(0, 50) + '...'
-          });
+          console.log(`🔔 إشعار جديد للمستخدم: ${userId}`);
 
-          // إرسال إيميل إشعار
           const emailSent = await sendNotificationEmail(userEmail, {
             user_name: notification.user_name,
-            user_avatar: notification.user_avatar,
             reply: notification.reply,
-            updateAt: notification.updateAt,
-            manga_name: notification.manga_name || 'مانجا',
-            manga_link: notification.manga_link || '#',
-            chapter_link: notification.chapter_link || '#',
-            comment_key: notification.comment_key || ''
+            updateAt: notification.updateAt
           });
 
           if (emailSent) {
-            console.log(`✅ تم إرسال إشعار بالبريد الإلكتروني للمستخدم: ${userEmail}`);
-          } else {
-            console.log(`❌ فشل إرسال إشعار للمستخدم: ${userEmail}`);
+            console.log(`✅ تم إرسال إشعار إلى: ${userEmail}`);
           }
         }
       }
 
-      // تحديث الحالة السابقة
       previousNotificationsState.set(userId, { ...currentNotifications });
     }
   });
 
-  // أيضًا مراقبة الإضافات الجديدة
   usersRef.on('child_added', (userSnapshot) => {
     const userId = userSnapshot.key;
     const userData = userSnapshot.val();
     
     if (userData && userData.notifications_users) {
-      // تخزين الحالة الأولية
       previousNotificationsState.set(userId, { ...userData.notifications_users });
     }
   });
+
+  console.log('✅ نظام مراقبة الإشعارات يعمل');
 }
 
 // 🛡️ نظام الحماية الأساسي
 const ALLOWED_NODES = ['users', 'comments', 'views', 'update'];
+const BAD_WORDS = ['كس', 'عرص', 'قحبة', 'شرموطة', 'زق', 'طيز', 'كسم', 'منيوك', 'خول', 'فاجر', 'عاهر', 'دعارة', 'شرموط', 'قحاب', 'شراميط', 'قحبه', 'كحبة', 'كحبة', 'زبي', 'قضيب', 'مهبل', 'فرج', 'منيوكة', 'منيوكه', 'داشر', 'داشرة', 'داشرر', 'داعر', 'داعره', 'داعرر', 'سافل', 'سافلة', 'سافلل', 'سكس', 'sex', 'porn', 'قحب', 'قحبة', 'قحبه', 'قحبو', 'نيك امك', 'نيكك', 'عطاي', 'نيك', 'nik', 'Nik', 'NIK', 'Nik mok', 'nik mok', 'بنت القحبة', 'https-pokiklas123-wq-github-io-chapter-html', 'nikmok', 'زكي', 'nikk', 'Nikk', 'NIKK', 'نيكسوة تاع مد', 'نيكسوة تاع ختك', 'نيكطيز', 'نيككس.امك', 'نيك.كس.امك', 'نيك.طيز.امك', 'نيك', 'سوة', 'قحبة', 'قحبا'];
 
-// 📋 قائمة كلمات السب المحسنة
-const BAD_WORDS = [
-    'كس', 'عرص', 'قحبة', 'شرموطة', 'زق', 'طيز', 'كسم', 'منيوك',
-    'خول', 'فاجر', 'عاهر', 'دعارة', 'شرموط', 'قحاب', 'شراميط',
-    'قحبه', 'كحبة', 'كحبة', 'زبي', 'قضيب', 'مهبل', 'فرج', 'منيوكة',
-    'منيوكه', 'داشر', 'داشرة', 'داشرر', 'داعر', 'داعره', 'داعرر',
-    'سافل', 'سافلة', 'سافلل', 'سكس', 'sex', 'porn', 'قحب', 'قحبة',
-    'قحبه', 'قحبو', 'نيك امك', 'نيكك', 'عطاي', 'نيك', 'nik',
-    'Nik', 'NIK', 'Nik mok', 'nik mok', 'بنت القحبة', 
-    'https-pokiklas123-wq-github-io-chapter-html', 'nikmok',
-    'زكي', 'nikk', 'Nikk', 'NIKK', 'نيكسوة تاع مد', 
-    'نيكسوة تاع ختك', 'نيكطيز', 'نيككس.امك', 'نيك.كس.امك', 
-    'نيك.طيز.امك', 'نيك', 'سوة', 'قحبة', 'قحبا'
-];
-
-// 🛡️ نظام كشف الروابط المتقدم
 const LINK_PATTERNS = [
     /https?:\/\/[^\s]+/g,
     /www\.[^\s]+\.[^\s]+/g,
@@ -305,7 +238,7 @@ const LINK_PATTERNS = [
     /discord\.gg\/[^\s]+/g
 ];
 
-// 🔄 نظام النسخ الاحتياطي المحسن - ينسخ جميع العقد تلقائياً
+// 🔄 نظام النسخ الاحتياطي
 async function createBackup() {
     if (isBotPaused) {
         console.log('⏸️ البوت متوقف مؤقتاً - تخطي النسخ الاحتياطي');
@@ -318,14 +251,12 @@ async function createBackup() {
     }
 
     try {
-        console.log('💾 بدء إنشاء نسخة احتياطية لجميع العقد...');
+        console.log('💾 بدء إنشاء نسخة احتياطية...');
         const db = admin.database();
         
-        // جلب جميع البيانات من الجذر الرئيسي
         const snapshot = await db.ref('/').once('value');
         const allData = snapshot.val() || {};
         
-        // تصفية العقد المسموح بها
         const filteredData = {};
         let totalNodes = 0;
         let totalRecords = 0;
@@ -341,7 +272,6 @@ async function createBackup() {
             }
         }
 
-        // إحصائيات النسخ الاحتياطي
         const stats = {
             totalNodes: totalNodes,
             totalRecords: totalRecords,
@@ -349,14 +279,12 @@ async function createBackup() {
             nodesList: Object.keys(filteredData)
         };
 
-        // إنشاء نص النسخة الاحتياطية
         let backupText = `💾 *نسخة احتياطية شاملة - ${stats.backupTime}*\n\n`;
         backupText += `📊 *الإحصائيات:*\n`;
         backupText += `📦 عدد العقد: ${stats.totalNodes}\n`;
         backupText += `📝 إجمالي السجلات: ${stats.totalRecords}\n`;
         backupText += `🕒 وقت النسخ: ${stats.backupTime}\n\n`;
 
-        // إضافة قائمة بالعقد المنسوخة
         backupText += `📁 *العقد المنسوخة:*\n`;
         stats.nodesList.forEach((node, index) => {
             const nodeData = filteredData[node];
@@ -364,10 +292,8 @@ async function createBackup() {
             backupText += `${index + 1}. ${node} (${recordCount} سجل)\n`;
         });
 
-        // إرسال النسخة النصية إلى القناة
         await bot.sendMessage(BACKUP_CHANNEL_ID, backupText, { parse_mode: 'Markdown' });
 
-        // إرسال ملف JSON كامل مع جميع البيانات
         const fullBackup = {
             metadata: {
                 backupTime: new Date().toISOString(),
@@ -395,7 +321,7 @@ async function createBackup() {
     }
 }
 
-// 🔍 دالة كشف الروابط المحسنة
+// 🔍 دالة كشف الروابط
 function containsLinks(text) {
     if (!text || typeof text !== 'string') {
         return false;
@@ -440,12 +366,12 @@ function containsBadWords(text) {
     return foundBadWord !== null;
 }
 
-// 🛡️ دالة الفحص الرئيسية المحسنة
+// 🛡️ دالة الفحص الرئيسية
 function containsBadWordsOrLinks(text) {
     return containsBadWords(text) || containsLinks(text);
 }
 
-// 🗑️ دالة حذف التعليق/الرد مع تحديث العداد
+// 🗑️ دالة حذف التعليق/الرد
 async function deleteOffensiveContent(commentKey, replyKey = null) {
     if (isBotPaused) {
         console.log('⏸️ البوت متوقف مؤقتاً - تخطي حذف المحتوى');
@@ -489,7 +415,7 @@ async function deleteOffensiveContent(commentKey, replyKey = null) {
     }
 }
 
-// ⚠️ دالة إضافة تحذير للمستخدم - تم التعديل حسب الطلب
+// ⚠️ دالة إضافة تحذير للمستخدم
 async function addUserWarning(userId, commentData = null, replyData = null) {
     if (isBotPaused) {
         console.log('⏸️ البوت متوقف مؤقتاً - تخطي إضافة تحذير');
@@ -508,7 +434,6 @@ async function addUserWarning(userId, commentData = null, replyData = null) {
         const currentWarnings = parseInt(userData.warning_comment) || 0;
         const newWarnings = currentWarnings + 1;
         
-        // تحديث العدد الإجمالي للتحذيرات
         await userRef.update({
             warning_comment: newWarnings.toString(),
             last_warning: new Date().getTime().toString()
@@ -516,7 +441,6 @@ async function addUserWarning(userId, commentData = null, replyData = null) {
         
         console.log(`⚠️ تم إضافة تحذير للمستخدم ${userId} - الإجمالي: ${newWarnings}`);
         
-        // إنشاء سجل تحذير مفصل إذا كان هناك بيانات تعليق/رد
         if (commentData || replyData) {
             const warningRef = db.ref(`users/${userId}/warning_comment_${newWarnings}`);
             const warningData = {
@@ -543,7 +467,7 @@ async function addUserWarning(userId, commentData = null, replyData = null) {
     }
 }
 
-// 🔄 نظام المراقبة التلقائية المحسن
+// 🔄 نظام المراقبة التلقائية
 function startCommentMonitoring() {
     if (isBotPaused) {
         console.log('⏸️ البوت متوقف مؤقتاً - تعطيل المراقبة');
@@ -702,7 +626,7 @@ async function protectionCycle() {
   }
   
   try {
-    console.log('🔍 بدء دورة حماية - ' + new Date().toLocaleTimeString('ar-EG'));
+    console.log('🔍 بدء دورة حماية...');
     
     const db = admin.database();
     const snapshot = await db.ref('/').once('value');
@@ -723,7 +647,6 @@ async function protectionCycle() {
       }
     }
 
-    // حذف المستخدمين غير المسموحين
     try {
       const auth = admin.auth();
       const dbUsers = await db.ref('users').once('value');
@@ -764,39 +687,112 @@ async function protectionCycle() {
 // أمر /start
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  console.log('📩 /start من: ' + chatId);
   
   const botStatus = isBotPaused ? '⏸️ متوقف مؤقتاً' : '✅ نشط';
   const emailStatus = gmailConfig.isConfigured ? '✅ مهيئ' : '❌ غير مهيئ';
-  const nodemailerStatus = nodemailer ? '✅ متاح' : '❌ غير متاح';
   
-  bot.sendMessage(chatId, `🛡️ *بوت حماية Firebase - ${botStatus}*
+  let message = `🛡️ *بوت حماية Firebase - ${botStatus}*\n\n`;
+  message += `${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت يعمل بشكل طبيعي'}\n`;
+  message += `📧 نظام الإيميل: ${emailStatus}\n\n`;
+  
+  if (gmailConfig.email) {
+    message += `📧 الإيميل المضبوط: ${gmailConfig.email}\n\n`;
+  }
+  
+  message += `*أوامر الإيميل:*\n`;
+  message += `/change_email [إيميل] - تعيين إيميل Gmail\n`;
+  message += `/change_pass [كلمة_سر] - تعيين كلمة مرور التطبيقات\n`;
+  message += `/email_status - حالة نظام الإيميل\n`;
+  message += `/test_email - اختبار إرسال إيميل\n\n`;
+  
+  message += `*أوامر التحكم:*\n`;
+  message += `/pause - إيقاف مؤقت\n`;
+  message += `/resume - استئناف العمل\n`;
+  message += `/status - حالة النظام\n\n`;
+  
+  message += `*الأوامر الأخرى:*\n`;
+  message += `/protect - تشغيل حماية فورية\n`;
+  message += `/backup - نسخ احتياطي فوري`;
 
-${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت يعمل بشكل طبيعي'}
-📧 نظام الإيميل: ${emailStatus}
-📦 وحدة nodemailer: ${nodemailerStatus}
+  bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+});
 
-${!nodemailer ? '❌ *ملاحظة:* nodemailer غير مثبت. الإيميلات لن تعمل.' : ''}
+// أمر تغيير الإيميل
+bot.onText(/\/change_email (.+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const email = match[1].trim();
+  
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    bot.sendMessage(chatId, '❌ صيغة الإيميل غير صحيحة!');
+    return;
+  }
+  
+  gmailConfig.email = email;
+  bot.sendMessage(chatId, `✅ تم تعيين الإيميل: ${email}\n\nالآن استخدم /change_pass [كلمة_السر] لإضافة كلمة مرور التطبيقات`);
+});
 
-*أوامر التحكم:*
-/pause - إيقاف مؤقت
-/resume - استئناف العمل
-/status - حالة النظام
+// أمر تغيير كلمة السر
+bot.onText(/\/change_pass (.+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const password = match[1].trim();
+  
+  if (!gmailConfig.email) {
+    bot.sendMessage(chatId, '❌ يجب تعيين الإيميل أولاً باستخدام /change_email');
+    return;
+  }
+  
+  gmailConfig.password = password;
+  gmailConfig.isConfigured = true;
+  
+  bot.sendMessage(chatId, `✅ تم تهيئة نظام الإيميل بنجاح!\n\n📧 الإيميل: ${gmailConfig.email}\n\n🔔 سيتم الآن مراقبة الإشعارات وإرسال الإيميلات تلقائياً.`);
+  console.log('✅ تم تهيئة نظام الإيميل بنجاح');
+  
+  setTimeout(() => {
+    startNotificationsMonitoring();
+  }, 2000);
+});
 
-*أوامر الإيميل:*
-/email_status - حالة نظام الإيميل
-/test_email - اختبار إرسال إيميل
+// أمر حالة الإيميل
+bot.onText(/\/email_status/, (msg) => {
+  const chatId = msg.chat.id;
+  
+  let status = '';
+  
+  if (!gmailConfig.isConfigured) {
+    status = `❌ *نظام الإيميل غير مهيئ*\n\nاستخدم:\n/change_email [إيميل]\n/change_pass [كلمة_سر]`;
+  } else {
+    status = `✅ *نظام الإيميل نشط*\n\n📧 الإيميل: ${gmailConfig.email}\n\n🔔 نظام مراقبة الإشعارات نشط\n📨 جاهز لإرسال الإيميلات التلقائية`;
+  }
+  
+  bot.sendMessage(chatId, status, { parse_mode: 'Markdown' });
+});
 
-*الأوامر الأخرى:*
-/protect - تشغيل حماية فورية
-/backup - نسخ احتياطي فوري
-/test - اختبار النظام
-/scan_comments - فحص التعليقات الحالية
-/badwords_list - عرض الكلمات الممنوعة
-/test_filter [نص] - اختبار الفلتر
-/test_links [نص] - اختبار كشف الروابط
-/add_word [كلمة] - إضافة كلمة ممنوعة
-/remove_word [كلمة] - إزالة كلمة ممنوعة`, { parse_mode: 'Markdown' });
+// أمر اختبار الإيميل
+bot.onText(/\/test_email/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  if (!gmailConfig.isConfigured) {
+    bot.sendMessage(chatId, '❌ نظام الإيميل غير مهيئ! استخدم /change_email و /change_pass أولاً');
+    return;
+  }
+  
+  bot.sendMessage(chatId, '📧 جاري اختبار إرسال الإيميل...');
+  
+  const testData = {
+    user_name: 'Mohamed admin',
+    reply: 'هذا رسالة تجريبية لاختبار نظام الإشعارات. إذا استلمت هذا الإيميل، فهذا يعني أن النظام يعمل بشكل صحيح! 🎉',
+    updateAt: Date.now().toString(),
+    manga_name: 'مانجا تجريبية'
+  };
+  
+  const success = await sendNotificationEmail(gmailConfig.email, testData);
+  
+  if (success) {
+    bot.sendMessage(chatId, `✅ تم إرسال إيميل اختبار بنجاح إلى: ${gmailConfig.email}`);
+  } else {
+    bot.sendMessage(chatId, '❌ فشل إرسال إيميل الاختبار. تحقق من السجلات للتفاصيل.');
+  }
 });
 
 // أمر /pause
@@ -839,14 +835,12 @@ bot.onText(/\/status/, (msg) => {
   const status = firebaseInitialized ? '✅ متصل' : '❌ غير متصل';
   const botStatus = isBotPaused ? '⏸️ متوقف مؤقتاً' : '✅ نشط';
   const emailStatus = gmailConfig.isConfigured ? '✅ مهيئ' : '❌ غير مهيئ';
-  const nodemailerStatus = nodemailer ? '✅ متاح' : '❌ غير متاح';
   
   bot.sendMessage(chatId, 
     `📊 *حالة النظام*\n\n` +
     `🤖 حالة البوت: ${botStatus}\n` +
     `🛡️ حماية Firebase: ${status}\n` +
     `📧 نظام الإيميل: ${emailStatus}\n` +
-    `📦 nodemailer: ${nodemailerStatus}\n` +
     `⏰ وقت التشغيل: ${Math.floor(process.uptime())} ثانية\n` +
     `📅 آخر تحديث: ${new Date().toLocaleString('ar-EG')}\n` +
     `⚡ سرعة الحماية: ${isBotPaused ? 'متوقفة' : 'نشطة'}\n` +
@@ -911,189 +905,13 @@ bot.onText(/\/backup/, async (msg) => {
   }
 });
 
-// أمر /test
-bot.onText(/\/test/, (msg) => {
-  const chatId = msg.chat.id;
-  const botStatus = isBotPaused ? '⏸️ متوقف مؤقتاً' : '✅ نشط';
-  
-  bot.sendMessage(chatId, 
-    `${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت يعمل بشكل طبيعي!'}\n` +
-    '🛡️ جميع أنظمة الحماية جاهزة\n' +
-    '💾 نظام النسخ الاحتياطي جاهز\n' +
-    `⚡ سرعة الحماية: ${isBotPaused ? 'متوقفة' : 'نشطة'}\n` +
-    `⏰ وقت التشغيل: ${Math.floor(process.uptime())} ثانية`
-  );
-});
-
-// أمر /scan_comments
-bot.onText(/\/scan_comments/, async (msg) => {
-  const chatId = msg.chat.id;
-  
-  if (isBotPaused) {
-    bot.sendMessage(chatId, '⏸️ البوت متوقف مؤقتاً - استخدم /resume أولا');
-    return;
-  }
-
-  if (!firebaseInitialized) {
-    bot.sendMessage(chatId, '❌ Firebase غير متصل!');
-    return;
-  }
-  
-  bot.sendMessage(chatId, '🔍 جاري فحص جميع التعليقات والردود...');
-  
-  const deletedCount = await scanExistingComments();
-  
-  bot.sendMessage(chatId, `✅ اكتمل الفحص\nتم حذف ${deletedCount} محتوى محظور`);
-});
-
-// أمر /badwords_list
-bot.onText(/\/badwords_list/, (msg) => {
-  const chatId = msg.chat.id;
-  const wordsList = BAD_WORDS.join(', ');
-  bot.sendMessage(chatId, `📋 *الكلمات الممنوعة:*\n\n${wordsList}`, { parse_mode: 'Markdown' });
-});
-
-// أمر /test_filter
-bot.onText(/\/test_filter (.+)/, (msg, match) => {
-  const chatId = msg.chat.id;
-  const text = match[1];
-  
-  const hasBadWords = containsBadWords(text);
-  
-  if (hasBadWords) {
-    bot.sendMessage(chatId, `🚨 *تم اكتشاف كلمات مسيئة!*\n\nالنص: "${text}"\n\nسيتم حذف هذا النص تلقائياً.`, { parse_mode: 'Markdown' });
-  } else {
-    bot.sendMessage(chatId, `✅ *النص نظيف*\n\nالنص: "${text}"\n\nلا توجد كلمات مسيئة.`, { parse_mode: 'Markdown' });
-  }
-});
-
-// أمر /test_links
-bot.onText(/\/test_links (.+)/, (msg, match) => {
-  const chatId = msg.chat.id;
-  const text = match[1];
-  
-  const hasLinks = containsLinks(text);
-  const hasBadWords = containsBadWords(text);
-  
-  let message = `📝 *نتيجة الفحص:*\n\nالنص: "${text}"\n\n`;
-  
-  if (hasLinks) {
-    message += "🚨 *تم اكتشاف روابط!*\n";
-  } else {
-    message += "✅ *لا توجد روابط*\n";
-  }
-  
-  if (hasBadWords) {
-    message += "🚨 *تم اكتشاف كلمات مسيئة!*\n";
-  } else {
-    message += "✅ *لا توجد كلمات مسيئة*\n";
-  }
-  
-  if (hasLinks || hasBadWords) {
-    message += "\n⚠️ سيتم حذف هذا المحتوى تلقائياً.";
-  } else {
-    message += "\n🎉 المحتوى آمن ومقبول.";
-  }
-  
-  bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-});
-
-// أمر /add_word
-bot.onText(/\/add_word (.+)/, (msg, match) => {
-  const chatId = msg.chat.id;
-  const word = match[1].trim();
-  
-  if (BAD_WORDS.includes(word)) {
-    bot.sendMessage(chatId, `⚠️ الكلمة "${word}" موجودة بالفعل في القائمة.`);
-  } else {
-    BAD_WORDS.push(word);
-    bot.sendMessage(chatId, `✅ تمت إضافة الكلمة "${word}" إلى القائمة الممنوعة.`);
-    console.log(`✅ تمت إضافة كلمة جديدة: ${word}`);
-  }
-});
-
-// أمر /remove_word
-bot.onText(/\/remove_word (.+)/, (msg, match) => {
-  const chatId = msg.chat.id;
-  const word = match[1].trim();
-  
-  const index = BAD_WORDS.indexOf(word);
-  if (index === -1) {
-    bot.sendMessage(chatId, `❌ الكلمة "${word}" غير موجودة في القائمة.`);
-  } else {
-    BAD_WORDS.splice(index, 1);
-    bot.sendMessage(chatId, `✅ تمت إزالة الكلمة "${word}" من القائمة الممنوعة.`);
-    console.log(`✅ تمت إزالة كلمة: ${word}`);
-  }
-});
-
-// 🆕 أمر حالة الإيميل
-bot.onText(/\/email_status/, (msg) => {
-  const chatId = msg.chat.id;
-  
-  let status = '';
-  
-  if (!nodemailer) {
-    status = '❌ *nodemailer غير مثبت*\n\nقم بتثبيت الحزمة أولاً:\n`npm install nodemailer`';
-  } else if (!gmailConfig.isConfigured) {
-    status = `❌ *نظام الإيميل غير مهيئ*\n\n📧 الإيميل: ${gmailConfig.email}\n\nجاري التهيئة التلقائية...`;
-    
-    // محاولة التهيئة التلقائية
-    if (gmailConfig.email && gmailConfig.password) {
-      gmailConfig.isConfigured = true;
-      setTimeout(() => {
-        startNotificationsMonitoring();
-      }, 2000);
-      status += '\n\n✅ تم التهيئة التلقائية!';
-    }
-  } else {
-    status = `✅ *نظام الإيميل نشط*\n\n📧 الإيميل: ${gmailConfig.email}\n\nجميع الإشعارات الجديدة سيتم إرسالها تلقائياً.`;
-  }
-  
-  bot.sendMessage(chatId, status, { parse_mode: 'Markdown' });
-});
-
-// 🆕 أمر اختبار الإيميل
-bot.onText(/\/test_email/, async (msg) => {
-  const chatId = msg.chat.id;
-  
-  if (!nodemailer) {
-    bot.sendMessage(chatId, '❌ nodemailer غير مثبت. لا يمكن اختبار الإيميل.');
-    return;
-  }
-  
-  if (!gmailConfig.isConfigured) {
-    bot.sendMessage(chatId, '❌ نظام الإيميل غير مهيئ!');
-    return;
-  }
-  
-  bot.sendMessage(chatId, '📧 جاري اختبار إرسال الإيميل...');
-  
-  const testData = {
-    user_name: 'مستخدم تجريبي',
-    reply: 'هذا رسالة تجريبية لاختبار نظام الإشعارات. إذا استلمت هذا الإيميل، فهذا يعني أن النظام يعمل بشكل صحيح! 🎉',
-    updateAt: Date.now().toString(),
-    manga_name: 'مانجا تجريبية',
-    manga_link: 'https://example.com',
-    chapter_link: 'https://example.com/chapter'
-  };
-  
-  const success = await sendNotificationEmail(gmailConfig.email, testData);
-  
-  if (success) {
-    bot.sendMessage(chatId, `✅ تم إرسال إيميل اختبار بنجاح إلى: ${gmailConfig.email}`);
-  } else {
-    bot.sendMessage(chatId, '❌ فشل إرسال إيميل الاختبار. تحقق من السجلات للتفاصيل.');
-  }
-});
-
 // معالجة أخطاء البوت
 bot.on('polling_error', (error) => {
   console.log('🔴 خطأ في البوت: ' + error.message);
 });
 
-// ⚡ التشغيل التلقائي كل 1 ثانية - محسن
-console.log('⚡ تفعيل الحماية التلقائية كل 1 ثانية...');
+// ⚡ التشغيل التلقائي
+console.log('⚡ تفعيل الحماية التلقائية...');
 
 function startProtectionCycle() {
   setTimeout(async () => {
@@ -1102,16 +920,13 @@ function startProtectionCycle() {
     } catch (error) {
       console.log('❌ خطأ في دورة الحماية: ' + error.message);
     } finally {
-      // تشغيل الدورة التالية بعد ثانية واحدة من انتهاء الدورة الحالية
       startProtectionCycle();
     }
-  }, 1000); // 1 ثانية
+  }, 1000);
 }
 
-// بدء دورة الحماية
 startProtectionCycle();
 
-// تفعيل نظام مراقبة التعليقات بعد 5 ثواني من التشغيل
 setTimeout(() => {
     startCommentMonitoring();
     setTimeout(() => {
@@ -1119,33 +934,14 @@ setTimeout(() => {
     }, 3000);
 }, 1000);
 
-// 🕒 نظام النسخ الاحتياطي التلقائي - تم التعديل إلى 24 ساعة
 console.log('💾 تفعيل النسخ الاحتياطي التلقائي كل 24 ساعة...');
 setInterval(() => {
     createBackup();
 }, BACKUP_INTERVAL);
 
-// بدء النسخ الاحتياطي الأول بعد 1 ثانية من التشغيل
 setTimeout(() => {
     createBackup();
 }, 1000);
-
-// بدء مراقبة الإشعارات بعد تهيئة النظام
-setTimeout(() => {
-  if (gmailConfig.email && gmailConfig.password && nodemailer) {
-    gmailConfig.isConfigured = true;
-    startNotificationsMonitoring();
-    console.log('🔔 نظام مراقبة الإشعارات مفعل');
-  } else {
-    console.log('⚠️ نظام الإيميل غير مهيئ بالكامل');
-    if (!nodemailer) {
-      console.log('❌ السبب: nodemailer غير متوفر');
-    }
-    if (!gmailConfig.email || !gmailConfig.password) {
-      console.log('❌ السبب: بيانات Gmail ناقصة');
-    }
-  }
-}, 5000);
 
 // 🎯 الحفاظ على الاستيقاظ
 function keepServiceAlive() {
@@ -1160,7 +956,6 @@ function keepServiceAlive() {
   }, 4 * 60 * 1000);
 }
 
-// بدء الحفاظ على الاستيقاظ بعد 1 ثانية
 setTimeout(keepServiceAlive, 1000);
 
-console.log('✅ النظام جاهز! الحماية التلقائية تعمل كل ثانية وجميع الأوامر نشطة.');
+console.log('✅ النظام جاهز! جميع الأوامر نشطة.');
