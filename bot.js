@@ -2,7 +2,6 @@ const TelegramBot = require('node-telegram-bot-api');
 const admin = require('firebase-admin');
 const express = require('express');
 const https = require('https');
-const nodemailer = require('nodemailer');
 
 // بدء خادم ويب لـ UptimeRobot
 const app = express();
@@ -49,30 +48,9 @@ console.log('✅ بوت التليجرام متصل');
 // 🔒 متغير للتحكم في حالة البوت
 let isBotPaused = false;
 
-// إعدادات النسخ الاحتياطي
+// إعدادات النسخ الاحتياطي - تم التعديل إلى 24 ساعة
 const BACKUP_CHANNEL_ID = '-1003424582714';
-const BACKUP_INTERVAL = 24 * 60 * 60 * 1000;
-
-// إعدادات البريد الإلكتروني
-const emailConfig = {
-  service: 'gmail',
-  auth: {
-    user: 'riwayatisupoort@gmail.com',
-    pass: 'yzf lvst iygr wnpz'
-  }
-};
-
-// إنشاء transporter للبريد الإلكتروني
-const emailTransporter = nodemailer.createTransport(emailConfig);
-
-// اختبار اتصال البريد الإلكتروني
-emailTransporter.verify((error, success) => {
-  if (error) {
-    console.log('❌ خطأ في إعداد البريد الإلكتروني:', error);
-  } else {
-    console.log('✅ البريد الإلكتروني جاهز للإرسال');
-  }
-});
+const BACKUP_INTERVAL = 24 * 60 * 60 * 1000; // كل 24 ساعة بدلاً من كل ساعة
 
 // تهيئة Firebase
 let firebaseInitialized = false;
@@ -114,6 +92,7 @@ const BAD_WORDS = [
     'نيك.طيز.امك', 'نيك', 'سوة', 'قحبة', 'قحبا'
 ];
 
+
 // 🛡️ نظام كشف الروابط المتقدم
 const LINK_PATTERNS = [
     /https?:\/\/[^\s]+/g,
@@ -129,271 +108,7 @@ const LINK_PATTERNS = [
     /discord\.gg\/[^\s]+/g
 ];
 
-// 🔔 نظام مراقبة الإشعارات
-let notificationsMonitoringActive = true;
-let processedNotifications = new Set();
-
-// دالة إرسال البريد الإلكتروني للمستخدم الذي تم الرد عليه
-async function sendReplyNotification(targetUserEmail, notificationData) {
-  try {
-    const mailOptions = {
-      from: 'riwayatisupoort@gmail.com',
-      to: targetUserEmail,
-      subject: `رد جديد على تعليقك - ${notificationData.replier_name}`,
-      html: `
-        <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px; background: #f9f9f9;">
-          <div style="text-align: center; margin-bottom: 20px;">
-            <h2 style="color: #0179FF; margin: 0;">Ruwayati</h2>
-            <p style="color: #666; margin: 5px 0;">إشعار جديد</p>
-          </div>
-          
-          <div style="background: white; padding: 20px; border-radius: 8px; margin: 15px 0; border-right: 4px solid #0179FF;">
-            <div style="display: flex; align-items: center; margin-bottom: 15px;">
-              <img src="${notificationData.replier_avatar}" alt="صورة المستخدم" style="width: 50px; height: 50px; border-radius: 50%; margin-left: 15px;">
-              <div>
-                <h3 style="color: #333; margin: 0; font-size: 18px;">${notificationData.replier_name}</h3>
-                <p style="color: #888; margin: 5px 0; font-size: 14px;">رد على تعليقك</p>
-              </div>
-            </div>
-            
-            <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; margin: 10px 0;">
-              <p style="color: #666; font-size: 14px; margin: 0 0 10px 0;"><strong>تعليقك:</strong></p>
-              <p style="color: #333; font-size: 16px; line-height: 1.6; margin: 0; background: white; padding: 10px; border-radius: 5px;">${notificationData.original_comment || 'تعليق سابق'}</p>
-            </div>
-            
-            <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; margin: 10px 0;">
-              <p style="color: #666; font-size: 14px; margin: 0 0 10px 0;"><strong>الرد:</strong></p>
-              <p style="color: #2e7d32; font-size: 16px; line-height: 1.6; margin: 0; background: white; padding: 10px; border-radius: 5px;">${notificationData.reply}</p>
-            </div>
-            
-            <div style="text-align: left; margin-top: 15px;">
-              <p style="color: #999; font-size: 12px; margin: 0;">
-                ${new Date(notificationData.timestamp).toLocaleString('ar-EG')}
-              </p>
-            </div>
-          </div>
-          
-          <div style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
-            <p style="color: #888; font-size: 12px;">
-              تم إرسال هذا الإشعار تلقائياً من نظام Ruwayati
-            </p>
-          </div>
-        </div>
-      `
-    };
-
-    const result = await emailTransporter.sendMail(mailOptions);
-    console.log(`✅ تم إرسال إشعار بالبريد إلى: ${targetUserEmail}`);
-    return true;
-  } catch (error) {
-    console.log(`❌ خطأ في إرسال البريد إلى ${targetUserEmail}:`, error.message);
-    return false;
-  }
-}
-
-// دالة فحص ومعالجة الإشعارات الموجودة
-async function processExistingNotifications() {
-  if (!firebaseInitialized || !notificationsMonitoringActive || isBotPaused) {
-    return;
-  }
-
-  try {
-    console.log('🔍 بدء فحص الإشعارات الموجودة...');
-    const db = admin.database();
-    const usersSnapshot = await db.ref('users').once('value');
-    const users = usersSnapshot.val();
-
-    if (!users) {
-      console.log('❌ لا يوجد مستخدمين في قاعدة البيانات');
-      return;
-    }
-
-    let totalProcessed = 0;
-    let totalSent = 0;
-
-    for (const userId in users) {
-      const userData = users[userId];
-      
-      if (userData.notifications_users) {
-        const notifications = userData.notifications_users;
-        
-        for (const notificationId in notifications) {
-          const notificationData = notifications[notificationId];
-          const notificationUniqueId = `${userId}_${notificationId}`;
-
-          // تجنب معالجة الإشعارات المكررة
-          if (processedNotifications.has(notificationUniqueId)) {
-            continue;
-          }
-
-          console.log(`🔔 معالجة إشعار موجود: ${notificationId} للمستخدم: ${userId}`);
-          
-          if (userData.user_email && notificationData) {
-            const emailNotificationData = {
-              replier_name: notificationData.user_name || 'مستخدم',
-              replier_avatar: notificationData.user_avatar || '',
-              reply: notificationData.reply || 'رد',
-              original_comment: notificationData.user_comment || 'تعليق سابق',
-              timestamp: notificationData.updateAt || Date.now()
-            };
-            
-            const emailSent = await sendReplyNotification(userData.user_email, emailNotificationData);
-            
-            if (emailSent) {
-              processedNotifications.add(notificationUniqueId);
-              totalSent++;
-              
-              sendTelegramAlert(
-                `🔔 تم إرسال إشعار موجود بالبريد\n` +
-                `👤 إلى: ${userData.user_email}\n` +
-                `🧑‍💼 من: ${notificationData.user_name}\n` +
-                `📝 الرد: ${notificationData.reply}\n` +
-                `🕒 الوقت: ${new Date().toLocaleString('ar-EG')}`
-              );
-            }
-          }
-          
-          totalProcessed++;
-        }
-      }
-    }
-
-    console.log(`✅ اكتمل فحص الإشعارات - تم معالجة ${totalProcessed} إشعار، تم إرسال ${totalSent} بريد`);
-
-  } catch (error) {
-    console.log('❌ خطأ في فحص الإشعارات الموجودة:', error.message);
-  }
-}
-
-// دالة مراقبة الإشعارات المحسنة
-function startNotificationsMonitoring() {
-  if (!firebaseInitialized) {
-    console.log('❌ Firebase غير متصل - تعطيل مراقبة الإشعارات');
-    return;
-  }
-
-  if (!notificationsMonitoringActive) {
-    console.log('⏸️ مراقبة الإشعارات معطلة');
-    return;
-  }
-
-  console.log('🔔 بدء مراقبة الإشعارات في جميع المستخدمين...');
-  const db = admin.database();
-
-  // مراقبة جميع المستخدمين
-  const usersRef = db.ref('users');
-  
-  usersRef.on('child_added', (userSnapshot) => {
-    const userId = userSnapshot.key;
-    const userData = userSnapshot.val();
-    
-    console.log(`👤 مراقبة مستخدم: ${userId}`);
-    
-    // مراقبة الإشعارات لكل مستخدم
-    const userNotificationsRef = db.ref(`users/${userId}/notifications_users`);
-    
-    userNotificationsRef.on('child_added', async (notificationSnapshot) => {
-      if (!notificationsMonitoringActive || isBotPaused) return;
-
-      const notificationId = notificationSnapshot.key;
-      const notificationData = notificationSnapshot.val();
-      
-      // إنشاء معرف فريد للإشعار
-      const notificationUniqueId = `${userId}_${notificationId}`;
-      
-      // تجنب معالجة الإشعارات المكررة
-      if (processedNotifications.has(notificationUniqueId)) {
-        console.log(`⏭️ تخطي إشعار مكرر: ${notificationUniqueId}`);
-        return;
-      }
-      
-      processedNotifications.add(notificationUniqueId);
-      
-      console.log(`🔔 إشعار جديد للمستخدم: ${userId}`);
-      console.log('📝 بيانات الإشعار:', notificationData);
-
-      if (userData && userData.user_email && notificationData) {
-        // إعداد بيانات الإشعار
-        const emailNotificationData = {
-          replier_name: notificationData.user_name || 'مستخدم',
-          replier_avatar: notificationData.user_avatar || '',
-          reply: notificationData.reply || 'رد',
-          original_comment: notificationData.user_comment || 'تعليق سابق',
-          timestamp: notificationData.updateAt || Date.now()
-        };
-        
-        // إرسال البريد الإلكتروني للمستخدم الحالي (الذي تم الرد عليه)
-        const emailSent = await sendReplyNotification(userData.user_email, emailNotificationData);
-        
-        if (emailSent) {
-          // إرسال تنبيه للتليجرام
-          sendTelegramAlert(
-            `🔔 تم إرسال إشعار جديد بالبريد\n` +
-            `👤 إلى: ${userData.user_email}\n` +
-            `🧑‍💼 من: ${notificationData.user_name}\n` +
-            `📝 الرد: ${notificationData.reply}\n` +
-            `🕒 الوقت: ${new Date().toLocaleString('ar-EG')}`
-          );
-        }
-      } else {
-        console.log('❌ لا يوجد بريد إلكتروني للمستخدم أو بيانات إشعار غير كافية');
-      }
-    });
-
-    // مراقبة التحديثات على الإشعارات الحالية
-    userNotificationsRef.on('child_changed', async (notificationSnapshot) => {
-      if (!notificationsMonitoringActive || isBotPaused) return;
-
-      const notificationId = notificationSnapshot.key;
-      const notificationData = notificationSnapshot.val();
-      const notificationUniqueId = `${userId}_${notificationId}`;
-      
-      // إذا كان هذا إشعارًا جديدًا لم نعالجه من قبل
-      if (!processedNotifications.has(notificationUniqueId)) {
-        processedNotifications.add(notificationUniqueId);
-        
-        console.log(`🔄 إشعار محدث للمستخدم: ${userId}`);
-        
-        if (userData && userData.user_email && notificationData) {
-          const emailNotificationData = {
-            replier_name: notificationData.user_name || 'مستخدم',
-            replier_avatar: notificationData.user_avatar || '',
-            reply: notificationData.reply || 'رد',
-            original_comment: notificationData.user_comment || 'تعليق سابق',
-            timestamp: notificationData.updateAt || Date.now()
-          };
-          
-          const emailSent = await sendReplyNotification(userData.user_email, emailNotificationData);
-          
-          if (emailSent) {
-            sendTelegramAlert(
-              `🔔 تم إرسال إشعار محدث بالبريد\n` +
-              `👤 إلى: ${userData.user_email}\n` +
-              `🧑‍💼 من: ${notificationData.user_name}\n` +
-              `📝 الرد: ${notificationData.reply}`
-            );
-          }
-        }
-      }
-    });
-
-    // تنظيف الإشعارات المحذوفة من الذاكرة
-    userNotificationsRef.on('child_removed', (removedSnapshot) => {
-      const notificationId = removedSnapshot.key;
-      const notificationUniqueId = `${userId}_${notificationId}`;
-      processedNotifications.delete(notificationUniqueId);
-      console.log(`🗑️ تم حذف إشعار: ${notificationId} للمستخدم: ${userId}`);
-    });
-  });
-
-  // تنظيف مراقبة المستخدمين المحذوفين
-  usersRef.on('child_removed', (removedSnapshot) => {
-    const userId = removedSnapshot.key;
-    console.log(`🗑️ تم حذف مستخدم: ${userId}`);
-  });
-}
-
-// 🔄 نظام النسخ الاحتياطي المحسن
+// 🔄 نظام النسخ الاحتياطي المحسن - ينسخ جميع العقد تلقائياً
 async function createBackup() {
     if (isBotPaused) {
         console.log('⏸️ البوت متوقف مؤقتاً - تخطي النسخ الاحتياطي');
@@ -409,9 +124,11 @@ async function createBackup() {
         console.log('💾 بدء إنشاء نسخة احتياطية لجميع العقد...');
         const db = admin.database();
         
+        // جلب جميع البيانات من الجذر الرئيسي
         const snapshot = await db.ref('/').once('value');
         const allData = snapshot.val() || {};
         
+        // تصفية العقد المسموح بها
         const filteredData = {};
         let totalNodes = 0;
         let totalRecords = 0;
@@ -427,6 +144,7 @@ async function createBackup() {
             }
         }
 
+        // إحصائيات النسخ الاحتياطي
         const stats = {
             totalNodes: totalNodes,
             totalRecords: totalRecords,
@@ -434,12 +152,14 @@ async function createBackup() {
             nodesList: Object.keys(filteredData)
         };
 
+        // إنشاء نص النسخة الاحتياطية
         let backupText = `💾 *نسخة احتياطية شاملة - ${stats.backupTime}*\n\n`;
         backupText += `📊 *الإحصائيات:*\n`;
         backupText += `📦 عدد العقد: ${stats.totalNodes}\n`;
         backupText += `📝 إجمالي السجلات: ${stats.totalRecords}\n`;
         backupText += `🕒 وقت النسخ: ${stats.backupTime}\n\n`;
 
+        // إضافة قائمة بالعقد المنسوخة
         backupText += `📁 *العقد المنسوخة:*\n`;
         stats.nodesList.forEach((node, index) => {
             const nodeData = filteredData[node];
@@ -447,8 +167,10 @@ async function createBackup() {
             backupText += `${index + 1}. ${node} (${recordCount} سجل)\n`;
         });
 
+        // إرسال النسخة النصية إلى القناة
         await bot.sendMessage(BACKUP_CHANNEL_ID, backupText, { parse_mode: 'Markdown' });
 
+        // إرسال ملف JSON كامل مع جميع البيانات
         const fullBackup = {
             metadata: {
                 backupTime: new Date().toISOString(),
@@ -570,7 +292,7 @@ async function deleteOffensiveContent(commentKey, replyKey = null) {
     }
 }
 
-// ⚠️ دالة إضافة تحذير للمستخدم
+// ⚠️ دالة إضافة تحذير للمستخدم - تم التعديل حسب الطلب
 async function addUserWarning(userId, commentData = null, replyData = null) {
     if (isBotPaused) {
         console.log('⏸️ البوت متوقف مؤقتاً - تخطي إضافة تحذير');
@@ -589,6 +311,7 @@ async function addUserWarning(userId, commentData = null, replyData = null) {
         const currentWarnings = parseInt(userData.warning_comment) || 0;
         const newWarnings = currentWarnings + 1;
         
+        // تحديث العدد الإجمالي للتحذيرات
         await userRef.update({
             warning_comment: newWarnings.toString(),
             last_warning: new Date().getTime().toString()
@@ -596,6 +319,7 @@ async function addUserWarning(userId, commentData = null, replyData = null) {
         
         console.log(`⚠️ تم إضافة تحذير للمستخدم ${userId} - الإجمالي: ${newWarnings}`);
         
+        // إنشاء سجل تحذير مفصل إذا كان هناك بيانات تعليق/رد
         if (commentData || replyData) {
             const warningRef = db.ref(`users/${userId}/warning_comment_${newWarnings}`);
             const warningData = {
@@ -846,20 +570,15 @@ bot.onText(/\/start/, (msg) => {
   console.log('📩 /start من: ' + chatId);
   
   const botStatus = isBotPaused ? '⏸️ متوقف مؤقتاً' : '✅ نشط';
-  const notificationsStatus = notificationsMonitoringActive ? '✅ نشطة' : '⏸️ متوقفة';
   
   bot.sendMessage(chatId, `🛡️ *بوت حماية Firebase - ${botStatus}*
 
 ${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت يعمل بشكل طبيعي'}
-🔔 مراقبة الإشعارات: ${notificationsStatus}
 
 *أوامر التحكم:*
 /pause - إيقاف مؤقت
 /resume - استئناف العمل
 /status - حالة النظام
-/notifications on - تفعيل الإشعارات
-/notifications off - تعطيل الإشعارات
-/process_notifications - معالجة الإشعارات الموجودة
 
 *الأوامر الأخرى:*
 /protect - تشغيل حماية فورية
@@ -884,8 +603,7 @@ bot.onText(/\/pause/, (msg) => {
     '❌ الحماية متوقفة\n' +
     '❌ مراقبة التعليقات متوقفة\n' +
     '❌ النسخ الاحتياطي متوقف\n' +
-    '❌ فحص المحتوى متوقف\n' +
-    '❌ إرسال الإشعارات متوقف\n\n' +
+    '❌ فحص المحتوى متوقف\n\n' +
     'استخدم /resume لاستئناف العمل', 
     { parse_mode: 'Markdown' }
   );
@@ -902,8 +620,7 @@ bot.onText(/\/resume/, (msg) => {
     '✅ الحماية نشطة\n' +
     '✅ مراقبة التعليقات نشطة\n' +
     '✅ النسخ الاحتياطي نشط\n' +
-    '✅ فحص المحتوى نشط\n' +
-    '✅ إرسال الإشعارات نشط\n\n' +
+    '✅ فحص المحتوى نشط\n\n' +
     'جميع الأنظمة تعمل بشكل طبيعي', 
     { parse_mode: 'Markdown' }
   );
@@ -914,13 +631,11 @@ bot.onText(/\/status/, (msg) => {
   const chatId = msg.chat.id;
   const status = firebaseInitialized ? '✅ متصل' : '❌ غير متصل';
   const botStatus = isBotPaused ? '⏸️ متوقف مؤقتاً' : '✅ نشط';
-  const notificationsStatus = notificationsMonitoringActive ? '✅ نشطة' : '⏸️ متوقفة';
   
   bot.sendMessage(chatId, 
     `📊 *حالة النظام*\n\n` +
     `🤖 حالة البوت: ${botStatus}\n` +
     `🛡️ حماية Firebase: ${status}\n` +
-    `🔔 مراقبة الإشعارات: ${notificationsStatus}\n` +
     `⏰ وقت التشغيل: ${Math.floor(process.uptime())} ثانية\n` +
     `📅 آخر تحديث: ${new Date().toLocaleString('ar-EG')}\n` +
     `⚡ سرعة الحماية: ${isBotPaused ? 'متوقفة' : 'كل 1 ثانية'}\n` +
@@ -928,48 +643,6 @@ bot.onText(/\/status/, (msg) => {
     `🔍 مراقبة التعليقات: ${isBotPaused ? 'متوقفة' : 'نشطة'}`,
     { parse_mode: 'Markdown' }
   );
-});
-
-// أمر /notifications
-bot.onText(/\/notifications (on|off)/, (msg, match) => {
-  const chatId = msg.chat.id;
-  const action = match[1];
-  
-  if (action === 'on') {
-    notificationsMonitoringActive = true;
-    bot.sendMessage(chatId, '🔔 *تم تفعيل مراقبة الإشعارات*\n\nسيتم إرسال بريد إلكتروني للمستخدمين عند تلقي إشعارات جديدة.', { parse_mode: 'Markdown' });
-    console.log('🔔 تفعيل مراقبة الإشعارات');
-    
-    // إعادة تشغيل المراقبة إذا كانت متوقفة
-    if (firebaseInitialized) {
-      setTimeout(() => {
-        startNotificationsMonitoring();
-      }, 1000);
-    }
-  } else {
-    notificationsMonitoringActive = false;
-    bot.sendMessage(chatId, '⏸️ *تم تعطيل مراقبة الإشعارات*\n\nلن يتم إرسال أي بريد إلكتروني للمستخدمين.', { parse_mode: 'Markdown' });
-    console.log('⏸️ تعطيل مراقبة الإشعارات');
-  }
-});
-
-// أمر جديد: معالجة الإشعارات الموجودة
-bot.onText(/\/process_notifications/, async (msg) => {
-  const chatId = msg.chat.id;
-  
-  if (isBotPaused) {
-    bot.sendMessage(chatId, '⏸️ البوت متوقف مؤقتاً - استخدم /resume أولا');
-    return;
-  }
-
-  if (!firebaseInitialized) {
-    bot.sendMessage(chatId, '❌ Firebase غير متصل!');
-    return;
-  }
-  
-  bot.sendMessage(chatId, '🔍 جاري معالجة الإشعارات الموجودة...');
-  await processExistingNotifications();
-  bot.sendMessage(chatId, '✅ تمت معالجة الإشعارات الموجودة');
 });
 
 // أمر /protect
@@ -1030,11 +703,9 @@ bot.onText(/\/backup/, async (msg) => {
 bot.onText(/\/test/, (msg) => {
   const chatId = msg.chat.id;
   const botStatus = isBotPaused ? '⏸️ متوقف مؤقتاً' : '✅ نشط';
-  const notificationsStatus = notificationsMonitoringActive ? '✅ نشطة' : '⏸️ متوقفة';
   
   bot.sendMessage(chatId, 
     `${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت يعمل بشكل طبيعي!'}\n` +
-    `🔔 مراقبة الإشعارات: ${notificationsStatus}\n` +
     '🛡️ جميع أنظمة الحماية جاهزة\n' +
     '💾 نظام النسخ الاحتياطي جاهز\n' +
     `⚡ سرعة الحماية: ${isBotPaused ? 'متوقفة' : 'كل ثانية'}\n` +
@@ -1149,7 +820,7 @@ bot.on('polling_error', (error) => {
   console.log('🔴 خطأ في البوت: ' + error.message);
 });
 
-// ⚡ التشغيل التلقائي كل 1 ثانية
+// ⚡ التشغيل التلقائي كل 1 ثانية - محسن
 console.log('⚡ تفعيل الحماية التلقائية كل 1 ثانية...');
 
 function startProtectionCycle() {
@@ -1159,9 +830,10 @@ function startProtectionCycle() {
     } catch (error) {
       console.log('❌ خطأ في دورة الحماية: ' + error.message);
     } finally {
+      // تشغيل الدورة التالية بعد ثانية واحدة من انتهاء الدورة الحالية
       startProtectionCycle();
     }
-  }, 1000);
+  }, 1000); // 1 ثانية
 }
 
 // بدء دورة الحماية
@@ -1175,17 +847,7 @@ setTimeout(() => {
     }, 3000);
 }, 1000);
 
-// تفعيل نظام مراقبة الإشعارات بعد 10 ثواني من التشغيل
-setTimeout(() => {
-    startNotificationsMonitoring();
-}, 10000);
-
-// معالجة الإشعارات الموجودة بعد 15 ثانية من التشغيل
-setTimeout(() => {
-    processExistingNotifications();
-}, 15000);
-
-// 🕒 نظام النسخ الاحتياطي التلقائي
+// 🕒 نظام النسخ الاحتياطي التلقائي - تم التعديل إلى 24 ساعة
 console.log('💾 تفعيل النسخ الاحتياطي التلقائي كل 24 ساعة...');
 setInterval(() => {
     createBackup();
