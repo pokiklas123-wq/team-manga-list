@@ -49,9 +49,9 @@ console.log('✅ بوت التليجرام متصل');
 // 🔒 متغير للتحكم في حالة البوت
 let isBotPaused = false;
 
-// إعدادات النسخ الاحتياطي - تم التعديل إلى 24 ساعة
+// إعدادات النسخ الاحتياطي
 const BACKUP_CHANNEL_ID = '-1003424582714';
-const BACKUP_INTERVAL = 24 * 60 * 60 * 1000; // كل 24 ساعة بدلاً من كل ساعة
+const BACKUP_INTERVAL = 24 * 60 * 60 * 1000;
 
 // إعدادات البريد الإلكتروني
 const emailConfig = {
@@ -131,7 +131,7 @@ const LINK_PATTERNS = [
 
 // 🔔 نظام مراقبة الإشعارات
 let notificationsMonitoringActive = true;
-let processedNotifications = new Set(); // لتجنب معالجة الإشعارات المكررة
+let processedNotifications = new Set();
 
 // دالة إرسال البريد الإلكتروني للمستخدم الذي تم الرد عليه
 async function sendReplyNotification(targetUserEmail, notificationData) {
@@ -191,23 +191,77 @@ async function sendReplyNotification(targetUserEmail, notificationData) {
   }
 }
 
-// دالة للحصول على بريد المستخدم من خلال user_id
-async function getUserEmailByUserId(userId) {
-  if (!firebaseInitialized) return null;
-  
+// دالة فحص ومعالجة الإشعارات الموجودة
+async function processExistingNotifications() {
+  if (!firebaseInitialized || !notificationsMonitoringActive || isBotPaused) {
+    return;
+  }
+
   try {
+    console.log('🔍 بدء فحص الإشعارات الموجودة...');
     const db = admin.database();
-    const userRef = db.ref(`users/${userId}`);
-    const snapshot = await userRef.once('value');
-    const userData = snapshot.val();
-    
-    if (userData && userData.user_email) {
-      return userData.user_email;
+    const usersSnapshot = await db.ref('users').once('value');
+    const users = usersSnapshot.val();
+
+    if (!users) {
+      console.log('❌ لا يوجد مستخدمين في قاعدة البيانات');
+      return;
     }
-    return null;
+
+    let totalProcessed = 0;
+    let totalSent = 0;
+
+    for (const userId in users) {
+      const userData = users[userId];
+      
+      if (userData.notifications_users) {
+        const notifications = userData.notifications_users;
+        
+        for (const notificationId in notifications) {
+          const notificationData = notifications[notificationId];
+          const notificationUniqueId = `${userId}_${notificationId}`;
+
+          // تجنب معالجة الإشعارات المكررة
+          if (processedNotifications.has(notificationUniqueId)) {
+            continue;
+          }
+
+          console.log(`🔔 معالجة إشعار موجود: ${notificationId} للمستخدم: ${userId}`);
+          
+          if (userData.user_email && notificationData) {
+            const emailNotificationData = {
+              replier_name: notificationData.user_name || 'مستخدم',
+              replier_avatar: notificationData.user_avatar || '',
+              reply: notificationData.reply || 'رد',
+              original_comment: notificationData.user_comment || 'تعليق سابق',
+              timestamp: notificationData.updateAt || Date.now()
+            };
+            
+            const emailSent = await sendReplyNotification(userData.user_email, emailNotificationData);
+            
+            if (emailSent) {
+              processedNotifications.add(notificationUniqueId);
+              totalSent++;
+              
+              sendTelegramAlert(
+                `🔔 تم إرسال إشعار موجود بالبريد\n` +
+                `👤 إلى: ${userData.user_email}\n` +
+                `🧑‍💼 من: ${notificationData.user_name}\n` +
+                `📝 الرد: ${notificationData.reply}\n` +
+                `🕒 الوقت: ${new Date().toLocaleString('ar-EG')}`
+              );
+            }
+          }
+          
+          totalProcessed++;
+        }
+      }
+    }
+
+    console.log(`✅ اكتمل فحص الإشعارات - تم معالجة ${totalProcessed} إشعار، تم إرسال ${totalSent} بريد`);
+
   } catch (error) {
-    console.log(`❌ خطأ في جلب بريد المستخدم ${userId}:`, error.message);
-    return null;
+    console.log('❌ خطأ في فحص الإشعارات الموجودة:', error.message);
   }
 }
 
@@ -249,24 +303,22 @@ function startNotificationsMonitoring() {
       
       // تجنب معالجة الإشعارات المكررة
       if (processedNotifications.has(notificationUniqueId)) {
+        console.log(`⏭️ تخطي إشعار مكرر: ${notificationUniqueId}`);
         return;
       }
+      
       processedNotifications.add(notificationUniqueId);
       
       console.log(`🔔 إشعار جديد للمستخدم: ${userId}`);
       console.log('📝 بيانات الإشعار:', notificationData);
 
-      // هنا نحتاج إلى معرفة من هو المستخدم الذي تم الرد عليه
-      // في هيكل البيانات، notificationData تحتوي على معلومات الشخص الذي رد
-      // لكننا نحتاج لإرسال البريد للمستخدم الحالي (صاحب الإشعارات)
-      
       if (userData && userData.user_email && notificationData) {
         // إعداد بيانات الإشعار
         const emailNotificationData = {
           replier_name: notificationData.user_name || 'مستخدم',
           replier_avatar: notificationData.user_avatar || '',
           reply: notificationData.reply || 'رد',
-          original_comment: notificationData.user_commen || 'تعليق سابق',
+          original_comment: notificationData.user_comment || 'تعليق سابق',
           timestamp: notificationData.updateAt || Date.now()
         };
         
@@ -276,7 +328,7 @@ function startNotificationsMonitoring() {
         if (emailSent) {
           // إرسال تنبيه للتليجرام
           sendTelegramAlert(
-            `🔔 تم إرسال إشعار بالبريد\n` +
+            `🔔 تم إرسال إشعار جديد بالبريد\n` +
             `👤 إلى: ${userData.user_email}\n` +
             `🧑‍💼 من: ${notificationData.user_name}\n` +
             `📝 الرد: ${notificationData.reply}\n` +
@@ -307,7 +359,7 @@ function startNotificationsMonitoring() {
             replier_name: notificationData.user_name || 'مستخدم',
             replier_avatar: notificationData.user_avatar || '',
             reply: notificationData.reply || 'رد',
-            original_comment: notificationData.user_commen || 'تعليق سابق',
+            original_comment: notificationData.user_comment || 'تعليق سابق',
             timestamp: notificationData.updateAt || Date.now()
           };
           
@@ -338,11 +390,10 @@ function startNotificationsMonitoring() {
   usersRef.on('child_removed', (removedSnapshot) => {
     const userId = removedSnapshot.key;
     console.log(`🗑️ تم حذف مستخدم: ${userId}`);
-    // يمكن إضافة تنظيف الذاكرة هنا إذا لزم الأمر
   });
 }
 
-// 🔄 نظام النسخ الاحتياطي المحسن - ينسخ جميع العقد تلقائياً
+// 🔄 نظام النسخ الاحتياطي المحسن
 async function createBackup() {
     if (isBotPaused) {
         console.log('⏸️ البوت متوقف مؤقتاً - تخطي النسخ الاحتياطي');
@@ -358,11 +409,9 @@ async function createBackup() {
         console.log('💾 بدء إنشاء نسخة احتياطية لجميع العقد...');
         const db = admin.database();
         
-        // جلب جميع البيانات من الجذر الرئيسي
         const snapshot = await db.ref('/').once('value');
         const allData = snapshot.val() || {};
         
-        // تصفية العقد المسموح بها
         const filteredData = {};
         let totalNodes = 0;
         let totalRecords = 0;
@@ -378,7 +427,6 @@ async function createBackup() {
             }
         }
 
-        // إحصائيات النسخ الاحتياطي
         const stats = {
             totalNodes: totalNodes,
             totalRecords: totalRecords,
@@ -386,14 +434,12 @@ async function createBackup() {
             nodesList: Object.keys(filteredData)
         };
 
-        // إنشاء نص النسخة الاحتياطية
         let backupText = `💾 *نسخة احتياطية شاملة - ${stats.backupTime}*\n\n`;
         backupText += `📊 *الإحصائيات:*\n`;
         backupText += `📦 عدد العقد: ${stats.totalNodes}\n`;
         backupText += `📝 إجمالي السجلات: ${stats.totalRecords}\n`;
         backupText += `🕒 وقت النسخ: ${stats.backupTime}\n\n`;
 
-        // إضافة قائمة بالعقد المنسوخة
         backupText += `📁 *العقد المنسوخة:*\n`;
         stats.nodesList.forEach((node, index) => {
             const nodeData = filteredData[node];
@@ -401,10 +447,8 @@ async function createBackup() {
             backupText += `${index + 1}. ${node} (${recordCount} سجل)\n`;
         });
 
-        // إرسال النسخة النصية إلى القناة
         await bot.sendMessage(BACKUP_CHANNEL_ID, backupText, { parse_mode: 'Markdown' });
 
-        // إرسال ملف JSON كامل مع جميع البيانات
         const fullBackup = {
             metadata: {
                 backupTime: new Date().toISOString(),
@@ -526,7 +570,7 @@ async function deleteOffensiveContent(commentKey, replyKey = null) {
     }
 }
 
-// ⚠️ دالة إضافة تحذير للمستخدم - تم التعديل حسب الطلب
+// ⚠️ دالة إضافة تحذير للمستخدم
 async function addUserWarning(userId, commentData = null, replyData = null) {
     if (isBotPaused) {
         console.log('⏸️ البوت متوقف مؤقتاً - تخطي إضافة تحذير');
@@ -545,7 +589,6 @@ async function addUserWarning(userId, commentData = null, replyData = null) {
         const currentWarnings = parseInt(userData.warning_comment) || 0;
         const newWarnings = currentWarnings + 1;
         
-        // تحديث العدد الإجمالي للتحذيرات
         await userRef.update({
             warning_comment: newWarnings.toString(),
             last_warning: new Date().getTime().toString()
@@ -553,7 +596,6 @@ async function addUserWarning(userId, commentData = null, replyData = null) {
         
         console.log(`⚠️ تم إضافة تحذير للمستخدم ${userId} - الإجمالي: ${newWarnings}`);
         
-        // إنشاء سجل تحذير مفصل إذا كان هناك بيانات تعليق/رد
         if (commentData || replyData) {
             const warningRef = db.ref(`users/${userId}/warning_comment_${newWarnings}`);
             const warningData = {
@@ -817,6 +859,7 @@ ${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت ي
 /status - حالة النظام
 /notifications on - تفعيل الإشعارات
 /notifications off - تعطيل الإشعارات
+/process_notifications - معالجة الإشعارات الموجودة
 
 *الأوامر الأخرى:*
 /protect - تشغيل حماية فورية
@@ -908,6 +951,25 @@ bot.onText(/\/notifications (on|off)/, (msg, match) => {
     bot.sendMessage(chatId, '⏸️ *تم تعطيل مراقبة الإشعارات*\n\nلن يتم إرسال أي بريد إلكتروني للمستخدمين.', { parse_mode: 'Markdown' });
     console.log('⏸️ تعطيل مراقبة الإشعارات');
   }
+});
+
+// أمر جديد: معالجة الإشعارات الموجودة
+bot.onText(/\/process_notifications/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  if (isBotPaused) {
+    bot.sendMessage(chatId, '⏸️ البوت متوقف مؤقتاً - استخدم /resume أولا');
+    return;
+  }
+
+  if (!firebaseInitialized) {
+    bot.sendMessage(chatId, '❌ Firebase غير متصل!');
+    return;
+  }
+  
+  bot.sendMessage(chatId, '🔍 جاري معالجة الإشعارات الموجودة...');
+  await processExistingNotifications();
+  bot.sendMessage(chatId, '✅ تمت معالجة الإشعارات الموجودة');
 });
 
 // أمر /protect
@@ -1087,7 +1149,7 @@ bot.on('polling_error', (error) => {
   console.log('🔴 خطأ في البوت: ' + error.message);
 });
 
-// ⚡ التشغيل التلقائي كل 1 ثانية - محسن
+// ⚡ التشغيل التلقائي كل 1 ثانية
 console.log('⚡ تفعيل الحماية التلقائية كل 1 ثانية...');
 
 function startProtectionCycle() {
@@ -1097,10 +1159,9 @@ function startProtectionCycle() {
     } catch (error) {
       console.log('❌ خطأ في دورة الحماية: ' + error.message);
     } finally {
-      // تشغيل الدورة التالية بعد ثانية واحدة من انتهاء الدورة الحالية
       startProtectionCycle();
     }
-  }, 1000); // 1 ثانية
+  }, 1000);
 }
 
 // بدء دورة الحماية
@@ -1119,7 +1180,12 @@ setTimeout(() => {
     startNotificationsMonitoring();
 }, 10000);
 
-// 🕒 نظام النسخ الاحتياطي التلقائي - تم التعديل إلى 24 ساعة
+// معالجة الإشعارات الموجودة بعد 15 ثانية من التشغيل
+setTimeout(() => {
+    processExistingNotifications();
+}, 15000);
+
+// 🕒 نظام النسخ الاحتياطي التلقائي
 console.log('💾 تفعيل النسخ الاحتياطي التلقائي كل 24 ساعة...');
 setInterval(() => {
     createBackup();
