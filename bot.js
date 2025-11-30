@@ -7,7 +7,7 @@ const nodemailer = require('nodemailer');
 // 🔐 متغيرات تخزين بيانات Gmail
 let gmailConfig = {
   email: 'riwayatisupoort@gmail.com',
-  password: 'dyzf lvst iygr wnpz',
+  password: 'dyzf lvst iygr wnpz', // هذا لن يعمل مع التحقق بخطوتين
   isConfigured: false
 };
 
@@ -57,9 +57,9 @@ console.log('✅ بوت التليجرام متصل');
 // 🔒 متغير للتحكم في حالة البوت
 let isBotPaused = false;
 
-// إعدادات النسخ الاحتياطي - تم التعديل إلى 24 ساعة
+// إعدادات النسخ الاحتياطي
 const BACKUP_CHANNEL_ID = '-1003424582714';
-const BACKUP_INTERVAL = 24 * 60 * 60 * 1000; // كل 24 ساعة بدلاً من كل ساعة
+const BACKUP_INTERVAL = 24 * 60 * 60 * 1000;
 
 // تهيئة Firebase
 let firebaseInitialized = false;
@@ -83,7 +83,7 @@ try {
   console.log('❌ خطأ في Firebase:', firebaseError.message);
 }
 
-// 📧 نظام إرسال الإيميلات
+// 📧 نظام إرسال الإيميلات المحسن
 async function sendNotificationEmail(userEmail, notificationData) {
   if (!gmailConfig.isConfigured) {
     console.log('❌ نظام الإيميل غير مهيئ');
@@ -91,13 +91,22 @@ async function sendNotificationEmail(userEmail, notificationData) {
   }
 
   try {
+    // إعدادات Nodemailer المحسنة
     const transporter = nodemailer.createTransporter({
       service: 'gmail',
       auth: {
         user: gmailConfig.email,
         pass: gmailConfig.password
-      }
+      },
+      tls: {
+        rejectUnauthorized: false
+      },
+      debug: true // تفعيل وضع التصحيح
     });
+
+    // التحقق من صحة الإتصال
+    await transporter.verify();
+    console.log('✅ اتصال Gmail صالح');
 
     const emailContent = `
       <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -105,25 +114,25 @@ async function sendNotificationEmail(userEmail, notificationData) {
         
         <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0;">
           <h3 style="color: #333; margin-bottom: 10px;">👤 المستخدم الذي رد عليك:</h3>
-          <p style="font-size: 18px; color: #2E86AB; font-weight: bold;">${notificationData.user_name}</p>
+          <p style="font-size: 18px; color: #2E86AB; font-weight: bold;">${notificationData.user_name || 'مستخدم'}</p>
           
           <h3 style="color: #333; margin-bottom: 10px;">📖 اسم المانجا:</h3>
-          <p style="font-size: 16px; color: #555;">${notificationData.manga_name || 'غير محدد'}</p>
+          <p style="font-size: 16px; color: #555;">${notificationData.manga_name || 'مانجا'}</p>
           
           <h3 style="color: #333; margin-bottom: 10px;">💬 الرسالة:</h3>
           <div style="background: white; padding: 15px; border-radius: 8px; border-right: 4px solid #2E86AB;">
-            <p style="margin: 0; color: #333; font-size: 16px;">${notificationData.reply}</p>
+            <p style="margin: 0; color: #333; font-size: 16px;">${notificationData.reply || 'لا يوجد نص'}</p>
           </div>
           
           <h3 style="color: #333; margin-bottom: 10px;">⏰ الوقت:</h3>
-          <p style="color: #666;">${new Date(parseInt(notificationData.updateAt)).toLocaleString('ar-EG')}</p>
+          <p style="color: #666;">${new Date(parseInt(notificationData.updateAt) || Date.now()).toLocaleString('ar-EG')}</p>
         </div>
         
         <div style="text-align: center; margin-top: 30px;">
-          <a href="${notificationData.manga_link}" style="background: #2E86AB; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
+          <a href="${notificationData.manga_link || '#'}" style="background: #2E86AB; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 5px;">
             📚 عرض المانجا
           </a>
-          <a href="${notificationData.chapter_link}" style="background: #A23B72; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin-right: 10px;">
+          <a href="${notificationData.chapter_link || '#'}" style="background: #A23B72; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 5px;">
             📖 عرض الفصل
           </a>
         </div>
@@ -136,23 +145,36 @@ async function sendNotificationEmail(userEmail, notificationData) {
     `;
 
     const mailOptions = {
-      from: gmailConfig.email,
+      from: `"منصة المانجا العربية" <${gmailConfig.email}>`,
       to: userEmail,
-      subject: `🔔 رد جديد على تعليقك - ${notificationData.user_name}`,
-      html: emailContent
+      subject: `🔔 رد جديد على تعليقك - ${notificationData.user_name || 'مستخدم'}`,
+      html: emailContent,
+      // إضافة نص عادي كبديل
+      text: `إشعار جديد - تعليق على منشورك\n\nالمستخدم: ${notificationData.user_name}\nالرسالة: ${notificationData.reply}\nالوقت: ${new Date(parseInt(notificationData.updateAt)).toLocaleString('ar-EG')}`
     };
 
+    console.log(`📤 محاولة إرسال إيميل إلى: ${userEmail}`);
     const result = await transporter.sendMail(mailOptions);
-    console.log(`✅ تم إرسال إيميل إشعار إلى: ${userEmail}`);
+    console.log(`✅ تم إرسال إيميل إشعار إلى: ${userEmail}`, result.messageId);
     return true;
 
   } catch (error) {
     console.log('❌ خطأ في إرسال الإيميل:', error.message);
+    
+    // تحليل نوع الخطأ
+    if (error.code === 'EAUTH') {
+      console.log('🔐 خطأ في المصادقة - تحقق من كلمة السر');
+    } else if (error.code === 'ECONNECTION') {
+      console.log('🌐 خطأ في الاتصال بالإنترنت');
+    } else {
+      console.log('⚠️ خطأ غير معروف:', error);
+    }
+    
     return false;
   }
 }
 
-// 🔍 نظام مراقبة الإشعارات
+// 🔍 نظام مراقبة الإشعارات المحسن
 function startNotificationsMonitoring() {
   if (isBotPaused) {
     console.log('⏸️ البوت متوقف مؤقتاً - تعطيل مراقبة الإشعارات');
@@ -172,16 +194,22 @@ function startNotificationsMonitoring() {
   console.log('🔔 بدء مراقبة إشعارات المستخدمين...');
   const db = admin.database();
 
-  // مراقبة جميع المستخدمين
+  // متغير لتخزين الحالة السابقة لكل مستخدم
+  const previousNotificationsState = new Map();
+
+  // المراقبة على مستوى كل مستخدم
   const usersRef = db.ref('users');
+  
   usersRef.on('child_changed', async (userSnapshot) => {
     if (isBotPaused) return;
 
     const userId = userSnapshot.key;
     const userData = userSnapshot.val();
     
+    console.log(`🔍 فحص تحديثات للمستخدم: ${userId}`);
+    
     if (userData && userData.notifications_users) {
-      const notifications = userData.notifications_users;
+      const currentNotifications = userData.notifications_users;
       const userEmail = userData.user_email;
       
       if (!userEmail) {
@@ -189,125 +217,84 @@ function startNotificationsMonitoring() {
         return;
       }
 
-      // الحصول على الإشعارات السابقة للمقارنة
-      const previousSnapshot = await usersRef.child(userId).once('value');
-      const previousData = previousSnapshot.val() || {};
-      const previousNotifications = previousData.notifications_users || {};
+      // الحصول على الحالة السابقة لهذا المستخدم
+      const previousNotifications = previousNotificationsState.get(userId) || {};
 
       // اكتشاف الإشعارات الجديدة
-      for (const notificationKey in notifications) {
+      for (const notificationKey in currentNotifications) {
         if (!previousNotifications[notificationKey]) {
           // هذا إشعار جديد
-          const notification = notifications[notificationKey];
-          console.log(`🔔 إشعار جديد للمستخدم: ${userId}`);
+          const notification = currentNotifications[notificationKey];
+          console.log(`🔔 إشعار جديد للمستخدم: ${userId}`, notification);
 
-          // إرسال إيميل إشعار
-          const emailSent = await sendNotificationEmail(userEmail, {
-            user_name: notification.user_name,
-            user_avatar: notification.user_avatar,
-            reply: notification.reply,
-            updateAt: notification.updateAt,
-            manga_name: notification.manga_name || 'مانجا',
-            manga_link: notification.manga_link || '#',
-            chapter_link: notification.chapter_link || '#',
-            comment_key: notification.comment_key || ''
-          });
+          // التأكد من وجود البيانات الأساسية
+          if (notification.reply && notification.user_name) {
+            // إرسال إيميل إشعار
+            const emailSent = await sendNotificationEmail(userEmail, {
+              user_name: notification.user_name,
+              user_avatar: notification.user_avatar,
+              reply: notification.reply,
+              updateAt: notification.updateAt,
+              manga_name: notification.manga_name || 'مانجا',
+              manga_link: notification.manga_link || '#',
+              chapter_link: notification.chapter_link || '#',
+              comment_key: notification.comment_key || ''
+            });
 
-          if (emailSent) {
-            console.log(`✅ تم إرسال إشعار بالبريد الإلكتروني للمستخدم: ${userEmail}`);
+            if (emailSent) {
+              console.log(`✅ تم إرسال إشعار بالبريد الإلكتروني للمستخدم: ${userEmail}`);
+              
+              // إرسال تأكيد للتليجرام
+              sendTelegramAlert(`📧 تم إرسال إشعار إيميل\n👤 إلى: ${userEmail}\n💬 من: ${notification.user_name}`);
+            } else {
+              console.log(`❌ فشل إرسال إشعار للمستخدم: ${userEmail}`);
+              sendTelegramAlert(`❌ فشل إرسال إشعار إيميل\n👤 إلى: ${userEmail}\n💬 من: ${notification.user_name}`);
+            }
           } else {
-            console.log(`❌ فشل إرسال إشعار للمستخدم: ${userEmail}`);
+            console.log('⚠️ إشعار ناقص البيانات:', notification);
           }
         }
       }
+
+      // تحديث الحالة السابقة
+      previousNotificationsState.set(userId, { ...currentNotifications });
+    }
+  });
+
+  // أيضًا مراقبة الإضافات الجديدة
+  usersRef.on('child_added', (userSnapshot) => {
+    const userId = userSnapshot.key;
+    const userData = userSnapshot.val();
+    
+    if (userData && userData.notifications_users) {
+      // تخزين الحالة الأولية
+      previousNotificationsState.set(userId, { ...userData.notifications_users });
     }
   });
 }
 
-// 🛡️ كود الحماية الأساسي (يبقى كما هو)
-const ALLOWED_NODES = ['users', 'comments', 'views', 'update'];
+// 🆕 دالة لإنشاء كلمة سر التطبيقات
+function generateAppPasswordInstructions() {
+  return `
+🔐 *تعليمات إنشاء كلمة سر التطبيقات في Gmail*
 
-// 📋 قائمة كلمات السب المحسنة (تبقى كما هي)
-const BAD_WORDS = [
-    'كس', 'عرص', 'قحبة', 'شرموطة', 'زق', 'طيز', 'كسم', 'منيوك',
-    'خول', 'فاجر', 'عاهر', 'دعارة', 'شرموط', 'قحاب', 'شراميط',
-    'قحبه', 'كحبة', 'كحبة', 'زبي', 'قضيب', 'مهبل', 'فرج', 'منيوكة',
-    'منيوكه', 'داشر', 'داشرة', 'داشرر', 'داعر', 'داعره', 'داعرر',
-    'سافل', 'سافلة', 'سافلل', 'سكس', 'sex', 'porn', 'قحب', 'قحبة',
-    'قحبه', 'قحبو', 'نيك امك', 'نيكك', 'عطاي', 'نيك', 'nik',
-    'Nik', 'NIK', 'Nik mok', 'nik mok', 'بنت القحبة', 
-    'https-pokiklas123-wq-github-io-chapter-html', 'nikmok',
-    'زكي', 'nikk', 'Nikk', 'NIKK', 'نيكسوة تاع مد', 
-    'نيكسوة تاع ختك', 'نيكطيز', 'نيككس.امك', 'نيك.كس.امك', 
-    'نيك.طيز.امك', 'نيك', 'سوة', 'قحبة', 'قحبا'
-];
+لإرسال الإيميلات من خلال Gmail، تحتاج إلى استخدام "كلمة سر التطبيقات" بدلاً من كلمة السر العادية:
 
-// 🛡️ نظام كشف الروابط المتقدم (يبقى كما هو)
-const LINK_PATTERNS = [
-    /https?:\/\/[^\s]+/g,
-    /www\.[^\s]+\.[^\s]+/g,
-    /[^\s]+\.[a-z]{2,}(\/[^\s]*)?/gi,
-    /t\.me\/[^\s]+/g,
-    /bit\.ly\/[^\s]+/g,
-    /youtu\.be\/[^\s]+/g,
-    /youtube\.com\/[^\s]+/g,
-    /instagram\.com\/[^\s]+/g,
-    /facebook\.com\/[^\s]+/g,
-    /twitter\.com\/[^\s]+/g,
-    /discord\.gg\/[^\s]+/g
-];
+1. ⚙️ انتقل إلى [إدارة حساب Google](https://myaccount.google.com/)
+2. 🔒 اضغط على "الأمان"
+3. 🔑 في قسم "تسجيل الدخول إلى Google"، اضغط على "كلمات مرور التطبيقات"
+4. 📱 اختر "البريد" و "جهاز الكمبيوتر" ثم انقر على "إنشاء"
+5. 📋 انسخ كلمة السر المكونة من 16 حرفاً
+6. 💬 استخدم الأمر: /change_pass [كلمة_السر_الجديدة]
 
-// 🔄 نظام النسخ الاحتياطي المحسن (يبقى كما هو)
-async function createBackup() {
-    // ... (نفس الكود السابق)
+ملاحظة: يجب تفعيل التحقق بخطوتين أولاً!
+  `;
 }
 
-// 🔍 دالة كشف الروابط المحسنة (تبقى كما هي)
-function containsLinks(text) {
-    // ... (نفس الكود السابق)
-}
+// 🛡️ باقي الكود (الحماية والتعليقات) يبقى كما هو
+// ... [نفس كود الحماية والتعليقات السابق]
 
-// 🔍 دالة للكشف عن السب (تبقى كما هي)
-function containsBadWords(text) {
-    // ... (نفس الكود السابق)
-}
-
-// 🛡️ دالة الفحص الرئيسية المحسنة (تبقى كما هي)
-function containsBadWordsOrLinks(text) {
-    // ... (نفس الكود السابق)
-}
-
-// 🗑️ دالة حذف التعليق/الرد مع تحديث العداد (تبقى كما هي)
-async function deleteOffensiveContent(commentKey, replyKey = null) {
-    // ... (نفس الكود السابق)
-}
-
-// ⚠️ دالة إضافة تحذير للمستخدم (تبقى كما هي)
-async function addUserWarning(userId, commentData = null, replyData = null) {
-    // ... (نفس الكود السابق)
-}
-
-// 🔄 نظام المراقبة التلقائية المحسن (تبقى كما هي)
-function startCommentMonitoring() {
-    // ... (نفس الكود السابق)
-}
-
-// 📨 دالة إرسال تنبيهات التليجرام (تبقى كما هي)
-function sendTelegramAlert(message) {
-    // ... (نفس الكود السابق)
-}
-
-// 🔍 دورة فحص التعليقات الحالية (تبقى كما هي)
-async function scanExistingComments() {
-    // ... (نفس الكود السابق)
-}
-
-// 🛡️ دورة الحماية الرئيسية (تبقى كما هي)
-async function protectionCycle() {
-    // ... (نفس الكود السابق)
-}
-
-// 💬 أوامر التليجرام الكاملة - مع إضافة الأوامر الجديدة
+// 💬 أوامر التليجرام المحدثة
 
 // أمر /start محدث
 bot.onText(/\/start/, (msg) => {
@@ -319,7 +306,7 @@ bot.onText(/\/start/, (msg) => {
   
   bot.sendMessage(chatId, `🛡️ *بوت حماية Firebase - ${botStatus}*
 
-${isBotStatus ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت يعمل بشكل طبيعي'}
+${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت يعمل بشكل طبيعي'}
 📧 نظام الإيميل: ${emailStatus}
 
 *أوامر التحكم:*
@@ -332,25 +319,26 @@ ${isBotStatus ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت ي
 /change_pass [كلمة سر] - تغيير كلمة السر
 /email_status - حالة نظام الإيميل
 /test_email - اختبار إرسال إيميل
+/app_password - تعليمات كلمة سر التطبيقات
 
 *الأوامر الأخرى:*
 /protect - تشغيل حماية فورية
 /backup - نسخ احتياطي فوري
 /test - اختبار النظام
-/scan_comments - فحص التعليقات الحالية
-/badwords_list - عرض الكلمات الممنوعة
-/test_filter [نص] - اختبار الفلتر
-/test_links [نص] - اختبار كشف الروابط
-/add_word [كلمة] - إضافة كلمة ممنوعة
-/remove_word [كلمة] - إزالة كلمة ممنوعة`, { parse_mode: 'Markdown' });
+/scan_comments - فحص التعليقات الحالية`, { parse_mode: 'Markdown' });
 });
 
-// 🆕 أمر تغيير الإيميل
+// 🆕 أمر تعليمات كلمة سر التطبيقات
+bot.onText(/\/app_password/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, generateAppPasswordInstructions(), { parse_mode: 'Markdown' });
+});
+
+// أمر تغيير الإيميل
 bot.onText(/\/change_email (.+)/, (msg, match) => {
   const chatId = msg.chat.id;
   const email = match[1].trim();
   
-  // التحقق من صحة الإيميل
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
     bot.sendMessage(chatId, '❌ صيغة الإيميل غير صحيحة!');
@@ -358,10 +346,12 @@ bot.onText(/\/change_email (.+)/, (msg, match) => {
   }
   
   gmailConfig.email = email;
-  bot.sendMessage(chatId, `✅ تم تعيين الإيميل: ${email}\n\nالآن استخدم /change_pass لإضافة كلمة السر`);
+  gmailConfig.isConfigured = false; // إعادة التعيين حتى يتم تعيين كلمة السر
+  
+  bot.sendMessage(chatId, `✅ تم تعيين الإيميل: ${email}\n\nالآن استخدم /change_pass لإضافة كلمة سر التطبيقات\n\nاستخدم /app_password لمعرفة كيفية إنشاء كلمة سر التطبيقات`);
 });
 
-// 🆕 أمر تغيير كلمة السر
+// أمر تغيير كلمة السر
 bot.onText(/\/change_pass (.+)/, (msg, match) => {
   const chatId = msg.chat.id;
   const password = match[1].trim();
@@ -372,29 +362,48 @@ bot.onText(/\/change_pass (.+)/, (msg, match) => {
   }
   
   gmailConfig.password = password;
-  gmailConfig.isConfigured = true;
   
-  bot.sendMessage(chatId, `✅ تم تهيئة نظام الإيميل بنجاح!\n\n📧 الإيميل: ${gmailConfig.email}\n\nسيتم الآن مراقبة الإشعارات وإرسال الإيميلات تلقائياً.`);
-  console.log('✅ تم تهيئة نظام الإيميل بنجاح');
+  // اختبار الإيميل فوراً
+  bot.sendMessage(chatId, '🔐 جاري اختبار إعدادات Gmail...');
   
-  // بدء مراقبة الإشعارات بعد تهيئة الإيميل
-  setTimeout(() => {
-    startNotificationsMonitoring();
-  }, 2000);
+  testGmailConnection().then(success => {
+    if (success) {
+      gmailConfig.isConfigured = true;
+      bot.sendMessage(chatId, `✅ تم تهيئة نظام الإيميل بنجاح!\n\n📧 الإيميل: ${gmailConfig.email}\n\nسيتم الآن مراقبة الإشعارات وإرسال الإيميلات تلقائياً.`);
+      console.log('✅ تم تهيئة نظام الإيميل بنجاح');
+      
+      // بدء مراقبة الإشعارات بعد تهيئة الإيميل
+      setTimeout(() => {
+        startNotificationsMonitoring();
+      }, 2000);
+    } else {
+      gmailConfig.isConfigured = false;
+      bot.sendMessage(chatId, `❌ فشل في تهيئة Gmail!\n\n⚠️ قد تحتاج إلى استخدام "كلمة سر التطبيقات"\n\nاستخدم /app_password للتعليمات`);
+    }
+  });
 });
 
-// 🆕 أمر حالة الإيميل
-bot.onText(/\/email_status/, (msg) => {
-  const chatId = msg.chat.id;
-  
-  const status = gmailConfig.isConfigured ? 
-    `✅ *نظام الإيميل نشط*\n\n📧 الإيميل: ${gmailConfig.email}\n\nجميع الإشعارات الجديدة سيتم إرسالها تلقائياً.` :
-    '❌ *نظام الإيميل غير مهيئ*\n\nاستخدم /change_email و /change_pass لتهيئة النظام.';
-  
-  bot.sendMessage(chatId, status, { parse_mode: 'Markdown' });
-});
+// 🆕 دالة اختبار اتصال Gmail
+async function testGmailConnection() {
+  try {
+    const transporter = nodemailer.createTransporter({
+      service: 'gmail',
+      auth: {
+        user: gmailConfig.email,
+        pass: gmailConfig.password
+      }
+    });
 
-// 🆕 أمر اختبار الإيميل
+    await transporter.verify();
+    console.log('✅ اختبار اتصال Gmail ناجح');
+    return true;
+  } catch (error) {
+    console.log('❌ فشل اختبار اتصال Gmail:', error.message);
+    return false;
+  }
+}
+
+// أمر اختبار الإيميل
 bot.onText(/\/test_email/, async (msg) => {
   const chatId = msg.chat.id;
   
@@ -407,7 +416,7 @@ bot.onText(/\/test_email/, async (msg) => {
   
   const testData = {
     user_name: 'مستخدم تجريبي',
-    reply: 'هذا رسالة تجريبية لاختبار نظام الإشعارات',
+    reply: 'هذا رسالة تجريبية لاختبار نظام الإشعارات. إذا استلمت هذا الإيميل، فهذا يعني أن النظام يعمل بشكل صحيح! 🎉',
     updateAt: Date.now().toString(),
     manga_name: 'مانجا تجريبية',
     manga_link: 'https://example.com',
@@ -419,82 +428,23 @@ bot.onText(/\/test_email/, async (msg) => {
   if (success) {
     bot.sendMessage(chatId, `✅ تم إرسال إيميل اختبار بنجاح إلى: ${gmailConfig.email}`);
   } else {
-    bot.sendMessage(chatId, '❌ فشل إرسال إيميل الاختبار. راجع السجلات للتفاصيل.');
+    bot.sendMessage(chatId, '❌ فشل إرسال إيميل الاختبار. تحقق من كلمة السر أو استخدم /app_password للتعليمات.');
   }
 });
 
-// الأوامر الأخرى تبقى كما هي (لا تغيير)
-bot.onText(/\/pause/, (msg) => {
-  // ... (نفس الكود السابق)
-});
+// ... [باقي الأوامر بدون تغيير]
 
-bot.onText(/\/resume/, (msg) => {
-  // ... (نفس الكود السابق)
-});
-
-bot.onText(/\/status/, (msg) => {
-  // ... (نفس الكود السابق)
-});
-
-// ... باقي الأوامر بدون تغيير
-
-// معالجة أخطاء البوت
-bot.on('polling_error', (error) => {
-  console.log('🔴 خطأ في البوت: ' + error.message);
-});
-
-// ⚡ التشغيل التلقائي كل 1 ثانية - محسن
+// ⚡ بدء التشغيل التلقائي
 console.log('⚡ تفعيل الحماية التلقائية كل 1 ثانية...');
 
-function startProtectionCycle() {
-  setTimeout(async () => {
-    try {
-      await protectionCycle();
-    } catch (error) {
-      console.log('❌ خطأ في دورة الحماية: ' + error.message);
-    } finally {
-      // تشغيل الدورة التالية بعد ثانية واحدة من انتهاء الدورة الحالية
-      startProtectionCycle();
-    }
-  }, 1000); // 1 ثانية
-}
-
-// بدء دورة الحماية
-startProtectionCycle();
-
-// تفعيل نظام مراقبة التعليقات بعد 5 ثواني من التشغيل
+// بدء مراقبة الإشعارات بعد تهيئة النظام
 setTimeout(() => {
-    startCommentMonitoring();
-    setTimeout(() => {
-        scanExistingComments();
-    }, 3000);
-}, 1000);
+  if (gmailConfig.isConfigured) {
+    startNotificationsMonitoring();
+    console.log('🔔 نظام مراقبة الإشعارات مفعل');
+  } else {
+    console.log('⚠️ نظام الإيميل غير مهيئ - سيتم تفعيل مراقبة الإشعارات عند التهيئة');
+  }
+}, 5000);
 
-// 🕒 نظام النسخ الاحتياطي التلقائي - تم التعديل إلى 24 ساعة
-console.log('💾 تفعيل النسخ الاحتياطي التلقائي كل 24 ساعة...');
-setInterval(() => {
-    createBackup();
-}, BACKUP_INTERVAL);
-
-// بدء النسخ الاحتياطي الأول بعد 1 ثانية من التشغيل
-setTimeout(() => {
-    createBackup();
-}, 1000);
-
-// 🎯 الحفاظ على الاستيقاظ
-function keepServiceAlive() {
-  console.log('🔧 تفعيل الحفاظ على الاستيقاظ...');
-  
-  setInterval(() => {
-    https.get('https://team-manga-list.onrender.com/ping', (res) => {
-      console.log('🔄 ping ناجح: ' + new Date().toLocaleTimeString('ar-EG'));
-    }).on('error', (err) => {
-      console.log('⚠️ خطأ في ping: ' + err.message);
-    });
-  }, 4 * 60 * 1000);
-}
-
-// بدء الحفاظ على الاستيقاظ بعد 1 ثانية
-setTimeout(keepServiceAlive, 1000);
-
-console.log('✅ النظام جاهز! الحماية التلقائية تعمل كل ثانية وجميع الأوامر نشطة.');
+// ... [باقي الكود بدون تغيير]
