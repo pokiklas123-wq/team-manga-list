@@ -6,9 +6,9 @@ const nodemailer = require('nodemailer');
 
 // 🔐 متغيرات تخزين بيانات Gmail
 let gmailConfig = {
-  email: 'riwayatisupoort@gmail.com',
-  password: 'dyzf lvst iygr wnpz',
-  isConfigured: true
+  email: '',
+  password: '',
+  isConfigured: false
 };
 
 // بدء خادم ويب لـ UptimeRobot
@@ -54,6 +54,10 @@ console.log('✅ بوت التليجرام متصل');
 
 let isBotPaused = false;
 
+// إعدادات النسخ الاحتياطي
+const BACKUP_CHANNEL_ID = '-1003424582714';
+const BACKUP_INTERVAL = 24 * 60 * 60 * 1000;
+
 // تهيئة Firebase
 let firebaseInitialized = false;
 try {
@@ -76,7 +80,7 @@ try {
   console.log('❌ خطأ في Firebase:', firebaseError.message);
 }
 
-// 📧 نظام إرسال الإيميلات المحسن بشكل نهائي
+// 📧 نظام إرسال الإيميلات المحسن
 async function sendNotificationEmail(userEmail, notificationData) {
   if (!gmailConfig.isConfigured) {
     console.log('❌ نظام الإيميل غير مهيئ');
@@ -86,11 +90,10 @@ async function sendNotificationEmail(userEmail, notificationData) {
   try {
     console.log(`📤 جاري إرسال إيميل إلى: ${userEmail}`);
     
-    // استخدم إعدادات SMTP المباشرة بدلاً من service: 'gmail'
     const transporter = nodemailer.createTransporter({
       host: 'smtp.gmail.com',
       port: 587,
-      secure: false, // استخدام TLS
+      secure: false,
       auth: {
         user: gmailConfig.email,
         pass: gmailConfig.password
@@ -100,7 +103,6 @@ async function sendNotificationEmail(userEmail, notificationData) {
       }
     });
 
-    // اختبار الاتصال
     console.log('🔐 جاري اختبار اتصال SMTP...');
     await transporter.verify();
     console.log('✅ اتصال SMTP ناجح');
@@ -151,17 +153,40 @@ async function sendNotificationEmail(userEmail, notificationData) {
 
   } catch (error) {
     console.log('❌ خطأ في إرسال الإيميل:', error.message);
-    console.log('🔍 تفاصيل الخطأ:', error);
     
     if (error.code === 'EAUTH') {
-      console.log('🔐 المشكلة في المصادقة - تأكد من:');
-      console.log('1. كلمة مرور التطبيقات صحيحة');
-      console.log('2. التحقق بخطوتين مفعل');
-      console.log('3. الإيميل مضبوط بشكل صحيح');
-    } else if (error.code === 'ECONNECTION') {
-      console.log('🌐 مشكلة في الاتصال - تحقق من الشبكة');
+      console.log('🔐 المشكلة في المصادقة - تأكد من كلمة مرور التطبيقات');
     }
     
+    return false;
+  }
+}
+
+// 🆕 دالة اختبار اتصال Gmail
+async function testGmailConnection() {
+  if (!gmailConfig.email || !gmailConfig.password) {
+    console.log('❌ بيانات Gmail غير مضبوطة');
+    return false;
+  }
+
+  try {
+    console.log('🔐 جاري اختبار اتصال Gmail...');
+    
+    const transporter = nodemailer.createTransporter({
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      auth: {
+        user: gmailConfig.email,
+        pass: gmailConfig.password
+      }
+    });
+
+    await transporter.verify();
+    console.log('✅ اختبار اتصال Gmail ناجح');
+    return true;
+  } catch (error) {
+    console.log('❌ فشل اختبار اتصال Gmail:', error.message);
     return false;
   }
 }
@@ -234,38 +259,6 @@ function startNotificationsMonitoring() {
   });
 
   console.log('✅ نظام مراقبة الإشعارات يعمل');
-}
-
-// 🆕 دالة اختبار اتصال Gmail بشكل منفصل
-async function testGmailConnection() {
-  if (!gmailConfig.email || !gmailConfig.password) {
-    console.log('❌ بيانات Gmail غير مضبوطة');
-    return false;
-  }
-
-  try {
-    console.log('🔐 جاري اختبار اتصال Gmail...');
-    
-    const transporter = nodemailer.createTransporter({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
-      auth: {
-        user: gmailConfig.email,
-        pass: gmailConfig.password
-      },
-      tls: {
-        rejectUnauthorized: false
-      }
-    });
-
-    await transporter.verify();
-    console.log('✅ اختبار اتصال Gmail ناجح');
-    return true;
-  } catch (error) {
-    console.log('❌ فشل اختبار اتصال Gmail:', error.message);
-    return false;
-  }
 }
 
 // 💬 أوامر التليجرام
@@ -445,3 +438,19 @@ setTimeout(() => {
 }, 5000);
 
 console.log('✅ البوت جاهز! استخدم /change_email و /change_pass لبدء الإعداد.');
+
+// باقي دوال الحماية والنسخ الاحتياطي تبقى كما هي...
+// [يجب إضافة باقي الكود هنا]
+
+// 🎯 الحفاظ على الاستيقاظ
+function keepServiceAlive() {
+  setInterval(() => {
+    https.get('https://team-manga-list.onrender.com/ping', (res) => {
+      console.log('🔄 ping ناجح');
+    }).on('error', (err) => {
+      console.log('⚠️ خطأ في ping: ' + err.message);
+    });
+  }, 4 * 60 * 1000);
+}
+
+setTimeout(keepServiceAlive, 1000);
