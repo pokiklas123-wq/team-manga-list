@@ -6,9 +6,9 @@ const nodemailer = require('nodemailer');
 
 // 🔐 متغيرات تخزين بيانات Gmail
 let gmailConfig = {
-  email: '',
-  password: '',
-  isConfigured: false
+  email: 'riwayatisupoort@gmail.com',
+  password: 'dyzf lvst iygr wnpz',
+  isConfigured: true
 };
 
 // بدء خادم ويب لـ UptimeRobot
