@@ -16,7 +16,7 @@ try {
 // 🔐 متغيرات تخزين بيانات Gmail
 let gmailConfig = {
   email: 'riwayatisupoort@gmail.com',
-  password: 'dyzf lvst iygr wnpz',
+  password: 'dyzflvstiygrwnpz',
   isConfigured: false
 };
 
