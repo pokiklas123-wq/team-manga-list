@@ -2,7 +2,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const admin = require('firebase-admin');
 const express = require('express');
 const https = require('https');
-const nodemailer = require('nodemailer'); // 📧 مكتبة إرسال الإيميلات
+const nodemailer = require('nodemailer'); // 📧 مكتبة إرسال البريد
 
 // بدء خادم ويب لـ UptimeRobot
 const app = express();
@@ -49,6 +49,12 @@ console.log('✅ بوت التليجرام متصل');
 // 🔒 متغير للتحكم في حالة البوت
 let isBotPaused = false;
 
+// 📧 إعدادات البريد الإلكتروني (متغيرات في الذاكرة)
+let emailConfig = {
+    email: '',
+    password: ''
+};
+
 // إعدادات النسخ الاحتياطي
 const BACKUP_CHANNEL_ID = '-1003424582714';
 const BACKUP_INTERVAL = 24 * 60 * 60 * 1000; 
@@ -76,10 +82,9 @@ try {
 }
 
 // 🛡️ كود الحماية الأساسي
-// تمت إضافة 'notifications_users' و 'bot_config' للعقد المسموحة
-const ALLOWED_NODES = ['users', 'comments', 'views', 'update', 'notifications_users', 'bot_config'];
+const ALLOWED_NODES = ['users', 'comments', 'views', 'update'];
 
-// 📋 قائمة كلمات السب
+// 📋 قائمة كلمات السب 
 const BAD_WORDS = [
     'كس', 'عرص', 'قحبة', 'شرموطة', 'زق', 'طيز', 'كسم', 'منيوك',
     'خول', 'فاجر', 'عاهر', 'دعارة', 'شرموط', 'قحاب', 'شراميط',
@@ -109,184 +114,185 @@ const LINK_PATTERNS = [
     /discord\.gg\/[^\s]+/g
 ];
 
-// 📧 دالة إعداد وحفظ بيانات البريد الإلكتروني
-async function saveBotConfig(key, value) {
-    if (!firebaseInitialized) return false;
+// 📧 دالة إعداد ناقل البريد
+function createTransporter() {
+    if (!emailConfig.email || !emailConfig.password) {
+        return null;
+    }
+    return nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+            user: emailConfig.email,
+            pass: emailConfig.password
+        }
+    });
+}
+
+// 📧 دالة إرسال إشعار بالبريد الإلكتروني
+async function sendEmailNotification(targetEmail, notificationData, userName) {
+    const transporter = createTransporter();
+    
+    if (!transporter) {
+        console.log('⚠️ لم يتم إعداد البريد الإلكتروني. استخدم /change_email و /change_pass');
+        return false;
+    }
+
+    // تجهيز محتوى الرسالة (HTML)
+    const htmlContent = `
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; direction: rtl; text-align: right; background-color: #f4f4f4; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 0 10px rgba(0,0,0,0.1);">
+            <div style="background-color: #0D8ABC; color: #ffffff; padding: 20px; text-align: center;">
+                <h2 style="margin: 0;">🔔 إشعار رد جديد</h2>
+            </div>
+            <div style="padding: 20px;">
+                <p>مرحباً <strong>${userName}</strong>،</p>
+                <p>قام <strong>${notificationData.user_name}</strong> بالرد على تعليقك.</p>
+                
+                <div style="background-color: #f9f9f9; border-right: 4px solid #0D8ABC; padding: 15px; margin: 20px 0;">
+                    <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                        <img src="${notificationData.user_avatar}" alt="avatar" style="width: 40px; height: 40px; border-radius: 50%; margin-left: 10px;">
+                        <strong>${notificationData.user_name}</strong>
+                    </div>
+                    <p style="margin: 0; color: #555;">${notificationData.reply}</p>
+                </div>
+
+                <div style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
+                    <p><strong>📖 المانجا:</strong> ${notificationData.manga_name || 'غير محدد'}</p>
+                    <p><strong>⌚ الوقت:</strong> ${new Date(parseInt(notificationData.updateAt)).toLocaleString('ar-EG')}</p>
+                </div>
+
+                <div style="text-align: center; margin-top: 30px;">
+                    <a href="${notificationData.chapter_link}" style="background-color: #0D8ABC; color: #ffffff; text-decoration: none; padding: 10px 20px; border-radius: 5px; font-weight: bold;">عرض الرد</a>
+                </div>
+            </div>
+            <div style="background-color: #eee; padding: 10px; text-align: center; font-size: 12px; color: #777;">
+                هذه رسالة تلقائية من تطبيق المانجا
+            </div>
+        </div>
+    </div>
+    `;
+
     try {
-        await admin.database().ref(`bot_config/${key}`).set(value);
+        await transporter.sendMail({
+            from: `"Manga Notifications" <${emailConfig.email}>`,
+            to: targetEmail,
+            subject: `رد جديد من ${notificationData.user_name}`,
+            html: htmlContent
+        });
+        console.log(`📧 تم إرسال بريد إلكتروني إلى ${targetEmail}`);
         return true;
     } catch (error) {
-        console.log(`❌ خطأ في حفظ إعدادات البوت (${key}):`, error.message);
+        console.log(`❌ فشل إرسال البريد إلى ${targetEmail}:`, error.message);
         return false;
     }
 }
 
-// 📧 دالة جلب إعدادات البريد الإلكتروني
-async function getBotConfig() {
-    if (!firebaseInitialized) return null;
-    try {
-        const snapshot = await admin.database().ref('bot_config').once('value');
-        return snapshot.val();
-    } catch (error) {
-        return null;
-    }
-}
+// 🔄 نظام مراقبة الإشعارات (Notifications Monitor)
+// ذاكرة مؤقتة لتجنب تكرار الإرسال لنفس الإشعار في فترة قصيرة
+const processedNotifications = new Set();
 
-// 📧 دالة إرسال البريد الإلكتروني
-async function sendEmailNotification(targetUserEmail, notificationData) {
-    const config = await getBotConfig();
-    
-    if (!config || !config.email || !config.password) {
-        console.log('⚠️ لم يتم إعداد بيانات البريد الإلكتروني. استخدم /change_email و /change_pass');
-        return;
-    }
-
-    // إعداد الناقل
-    let transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-            user: config.email,
-            pass: config.password // كلمة مرور التطبيق
-        }
-    });
-
-    // تنسيق محتوى الرسالة HTML
-    const htmlContent = `
-    <div style="direction: rtl; font-family: Arial, sans-serif; color: #333; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-        <h2 style="color: #d32f2f; text-align: center;">🔔 رد جديد على تعليقك!</h2>
-        <hr style="border: 0; border-top: 1px solid #eee;">
-        
-        <div style="margin-bottom: 15px;">
-            <p><strong>👤 الاسم الذي رد عليك:</strong> ${notificationData.replierName || 'مجهول'}</p>
-            <p><strong>📖 اسم المانجا:</strong> ${notificationData.mangaName || 'غير محدد'}</p>
-            <p><strong>💬 الرسالة:</strong></p>
-            <blockquote style="background: #f9f9f9; border-right: 4px solid #d32f2f; margin: 0; padding: 10px;">
-                ${notificationData.message || 'لا يوجد نص'}
-            </blockquote>
-            <p><strong>🕒 الوقت:</strong> ${notificationData.time || new Date().toLocaleString('ar-EG')}</p>
-        </div>
-
-        <div style="text-align: center; margin-top: 20px;">
-            <a href="${notificationData.chapterLink || '#'}" style="background-color: #d32f2f; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px;">🔗 رابط الفصل</a>
-            <a href="${notificationData.mangaLink || '#'}" style="background-color: #333; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px;">📚 رابط المانجا</a>
-        </div>
-        
-        <hr style="border: 0; border-top: 1px solid #eee; margin-top: 20px;">
-        <p style="font-size: 12px; color: #777; text-align: center;">تم إرسال هذا الإشعار تلقائياً من تطبيق مانجا عربية.</p>
-    </div>
-    `;
-
-    let mailOptions = {
-        from: `"Manga Arabic Bot" <${config.email}>`,
-        to: targetUserEmail,
-        subject: `💬 رد جديد من ${notificationData.replierName} في ${notificationData.mangaName}`,
-        html: htmlContent
-    };
-
-    try {
-        await transporter.sendMail(mailOptions);
-        console.log(`📧 تم إرسال إيميل بنجاح إلى: ${targetUserEmail}`);
-    } catch (error) {
-        console.log('❌ فشل إرسال الإيميل:', error.message);
-    }
-}
-
-// 🔔 نظام مراقبة الإشعارات الجديد
 function startNotificationMonitoring() {
     if (isBotPaused || !firebaseInitialized) return;
 
-    console.log('📨 بدء مراقبة الإشعارات الجديدة...');
+    console.log('🔔 بدء مراقبة الإشعارات الجديدة...');
     const db = admin.database();
-    const notificationsRef = db.ref('notifications_users');
+    const usersRef = db.ref('users');
 
-    // الاستماع للإشعارات الجديدة المضافة لكل مستخدم
-    // ملاحظة: هذا يستمع لأي تغيير في العقدة الرئيسية، قد يكون ثقيلاً إذا كان العدد ضخماً جداً
-    // الحل الأمثل هو الاستماع للأطفال المضافين حديثاً
-    
-    notificationsRef.on('child_changed', async (userSnapshot) => {
+    // نستمع لأي تغيير في عقدة المستخدمين
+    usersRef.on('child_changed', async (snapshot) => {
         if (isBotPaused) return;
-        
-        const userId = userSnapshot.key; // معرف المستخدم الذي تلقى الإشعار
-        const notifications = userSnapshot.val();
-        
-        // نحتاج للحصول على آخر إشعار تم إضافته
-        // بما أن child_changed يعيد الكائن كاملاً، سنأخذ آخر مفتاح
-        const notificationKeys = Object.keys(notifications);
-        const lastNotificationKey = notificationKeys[notificationKeys.length - 1];
-        const lastNotification = notifications[lastNotificationKey];
 
-        // التأكد من أن الإشعار جديد ولم يمر عليه وقت طويل (مثلاً دقيقة واحدة) لتجنب التكرار عند إعادة التشغيل
-        // هذا يتطلب وجود حقل timestamp في الإشعار، سنفترض وجوده أو نعالج فوراً
-        
-        console.log(`🔔 إشعار جديد للمستخدم: ${userId}`);
+        const userId = snapshot.key;
+        const userData = snapshot.val();
 
-        // جلب بيانات المستخدم للحصول على الإيميل
-        try {
-            const userRef = db.ref(`users/${userId}`);
-            const userSnap = await userRef.once('value');
-            const userData = userSnap.val();
+        // التحقق من وجود عقدة الإشعارات
+        if (userData && userData.notifications_users) {
+            const notifications = userData.notifications_users;
+            
+            // نتحقق من كل إشعار
+            for (const notifId in notifications) {
+                const notification = notifications[notifId];
+                
+                // مفتاح فريد للإشعار لتجنب التكرار
+                const uniqueNotifKey = `${userId}_${notifId}`;
 
-            if (userData && userData.email) {
-                // تجهيز بيانات الإشعار للإيميل
-                // تعتمد الأسماء هنا على ما ذكرته في سؤالك
-                const emailData = {
-                    replierName: lastNotification.userName || lastNotification.senderName || 'مستخدم', // اسم الذي رد
-                    mangaName: lastNotification.mangaName || 'مانجا',
-                    message: lastNotification.message || lastNotification.comment || '',
-                    time: lastNotification.time || new Date().toLocaleTimeString('ar-EG'),
-                    chapterLink: lastNotification.chapterLink || '',
-                    mangaLink: lastNotification.mangaLink || '',
-                    avatar: lastNotification.userImage || ''
-                };
+                // التحقق مما إذا كان الإشعار جديداً (مثلاً خلال آخر دقيقة)
+                // ولم يتم معالجته من قبل
+                const currentTime = Date.now();
+                const notifTime = parseInt(notification.updateAt);
+                
+                // نعتبره جديداً إذا كان وقته ضمن آخر 60 ثانية
+                // هذا يمنع إرسال إيميلات للإشعارات القديمة عند إعادة تشغيل البوت
+                const isRecent = (currentTime - notifTime) < 60000; 
 
-                // إرسال الإيميل
-                await sendEmailNotification(userData.email, emailData);
-            } else {
-                console.log(`⚠️ المستخدم ${userId} ليس لديه بريد إلكتروني مسجل.`);
+                if (isRecent && !processedNotifications.has(uniqueNotifKey)) {
+                    console.log(`🔔 إشعار جديد للمستخدم ${userId}`);
+                    
+                    // إضافة للمجموعة المعالجة
+                    processedNotifications.add(uniqueNotifKey);
+                    
+                    // تنظيف الذاكرة بعد فترة
+                    setTimeout(() => processedNotifications.delete(uniqueNotifKey), 120000);
+
+                    // إرسال البريد الإلكتروني
+                    if (userData.user_email) {
+                        await sendEmailNotification(userData.user_email, notification, userData.user_name);
+                    } else {
+                        console.log(`⚠️ المستخدم ${userId} ليس لديه بريد إلكتروني مسجل`);
+                    }
+                }
             }
-        } catch (err) {
-            console.log('❌ خطأ في معالجة الإشعار:', err.message);
         }
-    });
-    
-    // معالجة الحالة التي يكون فيها المستخدم جديداً في قائمة الإشعارات (child_added على الجذر)
-    notificationsRef.on('child_added', async (userSnapshot) => {
-        // نفس المنطق تقريباً، ولكن هنا المستخدم يتلقى أول إشعار له
-        // لتجنب إرسال إيميلات للإشعارات القديمة عند تشغيل البوت، يمكن إضافة شرط للوقت إذا توفر
     });
 }
 
-// ... (باقي دوال النسخ الاحتياطي والحماية كما هي) ...
+// ... [باقي دوال النسخ الاحتياطي والحماية كما هي في الكود الأصلي] ...
+// 🔄 نظام النسخ الاحتياطي المحسن
 async function createBackup() {
     if (isBotPaused || !firebaseInitialized) return false;
     try {
+        console.log('💾 بدء إنشاء نسخة احتياطية...');
         const db = admin.database();
         const snapshot = await db.ref('/').once('value');
         const allData = snapshot.val() || {};
         const filteredData = {};
         let totalNodes = 0;
+        let totalRecords = 0;
 
         for (const nodeName in allData) {
             if (ALLOWED_NODES.includes(nodeName)) {
                 filteredData[nodeName] = allData[nodeName];
                 totalNodes++;
+                if (allData[nodeName] && typeof allData[nodeName] === 'object') {
+                    totalRecords += Object.keys(allData[nodeName]).length;
+                }
             }
         }
 
-        const jsonData = JSON.stringify(filteredData, null, 2);
-        const fileName = `backup-${Date.now()}.json`;
-        
+        const stats = {
+            totalNodes: totalNodes,
+            totalRecords: totalRecords,
+            backupTime: new Date().toLocaleString('ar-EG')
+        };
+
+        let backupText = `💾 *نسخة احتياطية شاملة - ${stats.backupTime}*\n\n📊 *الإحصائيات:*\n📦 عدد العقد: ${stats.totalNodes}\n📝 إجمالي السجلات: ${stats.totalRecords}\n`;
+
+        await bot.sendMessage(BACKUP_CHANNEL_ID, backupText, { parse_mode: 'Markdown' });
+
+        const jsonData = JSON.stringify({ metadata: stats, data: filteredData }, null, 2);
         await bot.sendDocument(BACKUP_CHANNEL_ID, Buffer.from(jsonData), {}, {
-            filename: fileName,
+            filename: `backup-${Date.now()}.json`,
             contentType: 'application/json'
         });
+
         return true;
     } catch (error) {
-        console.log('❌ خطأ النسخ الاحتياطي:', error.message);
+        console.log('❌ خطأ في النسخ الاحتياطي:', error.message);
         return false;
     }
 }
 
+// دوال الفحص المساعدة
 function containsLinks(text) {
     if (!text || typeof text !== 'string') return false;
     for (const pattern of LINK_PATTERNS) {
@@ -321,11 +327,12 @@ async function deleteOffensiveContent(commentKey, replyKey = null) {
             return true;
         }
     } catch (error) {
+        console.log('❌ خطأ حذف:', error.message);
         return false;
     }
 }
 
-async function addUserWarning(userId) {
+async function addUserWarning(userId, commentData = null, replyData = null) {
     if (isBotPaused || !firebaseInitialized) return false;
     try {
         const db = admin.database();
@@ -333,36 +340,54 @@ async function addUserWarning(userId) {
         const snapshot = await userRef.once('value');
         const userData = snapshot.val() || {};
         const newWarnings = (parseInt(userData.warning_comment) || 0) + 1;
-        await userRef.update({ warning_comment: newWarnings.toString() });
+        
+        await userRef.update({
+            warning_comment: newWarnings.toString(),
+            last_warning: new Date().getTime().toString()
+        });
+
+        if (commentData || replyData) {
+            const warningRef = db.ref(`users/${userId}/warning_comment_${newWarnings}`);
+            await warningRef.set({
+                timestamp: new Date().getTime().toString(),
+                chapter_id: commentData?.chapter_id || 'غير محدد',
+                deleted_message: replyData ? replyData.text_rep : commentData.user_comment,
+                type: replyData ? 'reply' : 'comment'
+            });
+        }
         return newWarnings;
     } catch (error) {
+        console.log('❌ خطأ تحذير:', error.message);
         return false;
     }
 }
 
 function startCommentMonitoring() {
     if (isBotPaused || !firebaseInitialized) return;
+    
     const db = admin.database();
     const commentsRef = db.ref('comments');
-
+    
     commentsRef.on('child_added', async (snapshot) => {
         if (isBotPaused) return;
         const comment = snapshot.val();
-        if (comment && comment.user_comment && containsBadWordsOrLinks(comment.user_comment)) {
-            await deleteOffensiveContent(snapshot.key);
-            await addUserWarning(comment.user_id);
+        if (comment?.user_comment && containsBadWordsOrLinks(comment.user_comment)) {
+            if (await deleteOffensiveContent(snapshot.key)) {
+                await addUserWarning(comment.user_id, comment, null);
+            }
         }
     });
     
     commentsRef.on('child_changed', async (snapshot) => {
         if (isBotPaused) return;
         const comment = snapshot.val();
-        if (comment && comment.reply) {
+        if (comment?.reply) {
             for (const replyKey in comment.reply) {
                 const reply = comment.reply[replyKey];
-                if (reply && reply.text_rep && containsBadWordsOrLinks(reply.text_rep)) {
-                    await deleteOffensiveContent(snapshot.key, replyKey);
-                    await addUserWarning(reply.user_id);
+                if (reply?.text_rep && containsBadWordsOrLinks(reply.text_rep)) {
+                    if (await deleteOffensiveContent(snapshot.key, replyKey)) {
+                        await addUserWarning(reply.user_id, comment, reply);
+                    }
                 }
             }
         }
@@ -370,116 +395,106 @@ function startCommentMonitoring() {
 }
 
 async function protectionCycle() {
-  if (isBotPaused || !firebaseInitialized) return { deletedNodes: 0, deletedUsers: 0 };
-  try {
-    const db = admin.database();
-    const snapshot = await db.ref('/').once('value');
-    const data = snapshot.val();
-    let deletedNodes = 0;
-    if (data) {
-      for (const key in data) {
-        if (!ALLOWED_NODES.includes(key)) {
-          await db.ref(key).remove();
-          deletedNodes++;
+    if (isBotPaused || !firebaseInitialized) return { deletedNodes: 0, deletedUsers: 0 };
+    try {
+        const db = admin.database();
+        const snapshot = await db.ref('/').once('value');
+        const data = snapshot.val();
+        let deletedNodes = 0;
+
+        if (data) {
+            for (const key in data) {
+                if (!ALLOWED_NODES.includes(key)) {
+                    await db.ref(key).remove();
+                    deletedNodes++;
+                }
+            }
         }
-      }
+        return { deletedNodes, deletedUsers: 0 };
+    } catch (error) {
+        return { deletedNodes: 0, deletedUsers: 0 };
     }
-    return { deletedNodes, deletedUsers: 0 };
-  } catch (error) {
-    return { deletedNodes: 0, deletedUsers: 0 };
-  }
 }
 
-// 💬 أوامر التليجرام
+// 💬 أوامر التليجرام الجديدة (إعدادات البريد)
 
-// أوامر إعداد الإيميل الجديدة
-bot.onText(/\/change_email (.+)/, async (msg, match) => {
+// أمر /change_email
+bot.onText(/\/change_email (.+)/, (msg, match) => {
     const chatId = msg.chat.id;
-    // تحقق من أن المرسل هو الأدمن (يمكنك إضافة تحقق من ID هنا)
-    const email = match[1].trim();
-    const success = await saveBotConfig('email', email);
-    if (success) {
-        bot.sendMessage(chatId, `✅ تم حفظ الإيميل بنجاح:\n${email}`);
-    } else {
-        bot.sendMessage(chatId, '❌ حدث خطأ أثناء حفظ الإيميل.');
-    }
-});
+    // تحقق بسيط من صلاحية الأدمن (يمكنك إضافة تحقق من ID الخاص بك هنا)
+    // if (chatId.toString() !== process.env.ADMIN_CHAT_ID) return;
 
-bot.onText(/\/change_pass (.+)/, async (msg, match) => {
-    const chatId = msg.chat.id;
-    const pass = match[1].trim();
-    const success = await saveBotConfig('password', pass);
-    if (success) {
-        bot.sendMessage(chatId, `✅ تم حفظ كلمة المرور بنجاح.`);
-    } else {
-        bot.sendMessage(chatId, '❌ حدث خطأ أثناء حفظ كلمة المرور.');
-    }
-});
-
-bot.onText(/\/start/, (msg) => {
-  bot.sendMessage(msg.chat.id, `🛡️ *بوت حماية وإشعارات Manga Arabic*
-  
-*أوامر الإعداد:*
-/change_email [email] - تعيين إيميل الإرسال
-/change_pass [app_password] - تعيين كلمة المرور
-
-*الأوامر الأخرى:*
-/status - حالة النظام
-/pause - إيقاف مؤقت
-/resume - استئناف`, { parse_mode: 'Markdown' });
-});
-
-bot.onText(/\/pause/, (msg) => {
-  isBotPaused = true;
-  bot.sendMessage(msg.chat.id, '⏸️ تم إيقاف البوت مؤقتاً');
-});
-
-bot.onText(/\/resume/, (msg) => {
-  isBotPaused = false;
-  bot.sendMessage(msg.chat.id, '▶️ تم استئناف عمل البوت');
-});
-
-bot.onText(/\/status/, async (msg) => {
-    const config = await getBotConfig();
-    const emailStatus = (config && config.email && config.password) ? '✅ مهيأ' : '❌ غير مهيأ';
+    const newEmail = match[1].trim();
+    emailConfig.email = newEmail;
     
+    bot.sendMessage(chatId, `✅ تم تحديث البريد الإلكتروني للمرسل إلى:\n${newEmail}`);
+    console.log(`📧 تم تحديث إيميل المرسل`);
+});
+
+// أمر /change_pass
+bot.onText(/\/change_pass (.+)/, (msg, match) => {
+    const chatId = msg.chat.id;
+    const newPass = match[1].trim();
+    emailConfig.password = newPass;
+    
+    // نقوم بحذف الرسالة للحفاظ على السرية
+    bot.deleteMessage(chatId, msg.message_id).catch(() => {});
+    
+    bot.sendMessage(chatId, `✅ تم تحديث كلمة المرور بنجاح.`);
+    console.log(`🔑 تم تحديث كلمة مرور المرسل`);
+});
+
+// أمر /check_email_config
+bot.onText(/\/check_email_config/, (msg) => {
+    const chatId = msg.chat.id;
+    const status = (emailConfig.email && emailConfig.password) ? '✅ مهيأ' : '❌ غير مهيأ';
+    bot.sendMessage(chatId, `📧 حالة إعدادات البريد: ${status}\nالبريد الحالي: ${emailConfig.email || 'لا يوجد'}`);
+});
+
+// باقي الأوامر الأساسية
+bot.onText(/\/start/, (msg) => {
+  bot.sendMessage(msg.chat.id, `🛡️ *بوت الحماية والإشعارات*\n\nاستخدم /change_email و /change_pass لضبط إعدادات البريد.`, { parse_mode: 'Markdown' });
+});
+
+bot.onText(/\/pause/, (msg) => { isBotPaused = true; bot.sendMessage(msg.chat.id, '⏸️ تم الإيقاف'); });
+bot.onText(/\/resume/, (msg) => { isBotPaused = false; bot.sendMessage(msg.chat.id, '▶️ تم الاستئناف'); });
+
+bot.onText(/\/status/, (msg) => {
     bot.sendMessage(msg.chat.id, 
-    `📊 *حالة النظام*\n` +
-    `🤖 البوت: ${isBotPaused ? '⏸️ متوقف' : '✅ نشط'}\n` +
-    `📧 نظام الإيميل: ${emailStatus}\n` +
-    `🛡️ الحماية: نشطة`, { parse_mode: 'Markdown' });
+        `📊 *الحالة*\nFirebase: ${firebaseInitialized ? '✅' : '❌'}\nBot: ${isBotPaused ? '⏸️' : '✅'}\nEmail: ${emailConfig.email ? '✅' : '❌'}`, 
+        { parse_mode: 'Markdown' }
+    );
+});
+
+bot.onText(/\/protect/, async (msg) => {
+    const res = await protectionCycle();
+    bot.sendMessage(msg.chat.id, `✅ تم التنظيف. حذف ${res.deletedNodes} عقدة.`);
 });
 
 bot.onText(/\/backup/, async (msg) => {
-  bot.sendMessage(msg.chat.id, '💾 جاري إنشاء نسخة احتياطية...');
-  await createBackup();
-  bot.sendMessage(msg.chat.id, '✅ تم.');
+    await createBackup();
+    bot.sendMessage(msg.chat.id, '✅ تم طلب النسخ الاحتياطي.');
 });
 
 // معالجة الأخطاء
-bot.on('polling_error', (error) => console.log('🔴 خطأ في البوت: ' + error.message));
+bot.on('polling_error', (error) => console.log('🔴 خطأ بوت:', error.message));
 
 // ⚡ التشغيل التلقائي
-function startProtectionCycle() {
-  setTimeout(async () => {
-    try { await protectionCycle(); } 
-    catch (error) { console.log('❌ خطأ الحماية:', error.message); } 
-    finally { startProtectionCycle(); }
-  }, 1000);
-}
-
-startProtectionCycle();
-
 setTimeout(() => {
     startCommentMonitoring();
-    startNotificationMonitoring(); // 🔔 تشغيل مراقبة الإشعارات
+    startNotificationMonitoring(); // تشغيل مراقب الإشعارات
+    
+    // دورة الحماية كل ثانية
+    setInterval(() => protectionCycle().catch(e => console.log(e.message)), 1000);
+    
+    // النسخ الاحتياطي
+    setInterval(createBackup, BACKUP_INTERVAL);
+    
+    // Ping للحفاظ على الحياة
+    setInterval(() => {
+        https.get('https://team-manga-list.onrender.com/ping', () => {}).on('error', () => {});
+    }, 4 * 60 * 1000);
+
 }, 1000);
 
-setInterval(() => { createBackup(); }, BACKUP_INTERVAL);
-
-// 🎯 الحفاظ على الاستيقاظ
-setInterval(() => {
-    https.get('https://team-manga-list.onrender.com/ping', (res) => {}).on('error', (err) => {});
-}, 4 * 60 * 1000);
-
-console.log('✅ النظام جاهز بالكامل!');
+console.log('✅ النظام يعمل بالكامل');
