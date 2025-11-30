@@ -131,44 +131,87 @@ const LINK_PATTERNS = [
 
 // 🔔 نظام مراقبة الإشعارات
 let notificationsMonitoringActive = true;
+let processedNotifications = new Set(); // لتجنب معالجة الإشعارات المكررة
 
-// دالة إرسال البريد الإلكتروني
-async function sendNotificationEmail(userEmail, notificationData) {
+// دالة إرسال البريد الإلكتروني للمستخدم الذي تم الرد عليه
+async function sendReplyNotification(targetUserEmail, notificationData) {
   try {
     const mailOptions = {
       from: 'riwayatisupoort@gmail.com',
-      to: userEmail,
-      subject: 'إشعار جديد - Ruwayati',
+      to: targetUserEmail,
+      subject: `رد جديد على تعليقك - ${notificationData.replier_name}`,
       html: `
-        <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-          <h2 style="color: #0179FF; text-align: center;">إشعار جديد من Ruwayati</h2>
-          <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin: 15px 0;">
-            <h3 style="color: #333;">${notificationData.user_name} قام بالرد على تعليقك</h3>
-            <p style="color: #666; font-size: 16px; line-height: 1.6;">${notificationData.reply}</p>
-            <p style="color: #888; font-size: 14px;">${notificationData.user_commen}</p>
+        <div dir="rtl" style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px; background: #f9f9f9;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <h2 style="color: #0179FF; margin: 0;">Ruwayati</h2>
+            <p style="color: #666; margin: 5px 0;">إشعار جديد</p>
           </div>
-          <div style="text-align: center; margin-top: 20px;">
-            <img src="${notificationData.user_avatar}" alt="صورة المستخدم" style="width: 80px; height: 80px; border-radius: 50%;">
-            <p style="color: #999; margin-top: 10px;">${new Date(notificationData.updateAt).toLocaleString('ar-EG')}</p>
+          
+          <div style="background: white; padding: 20px; border-radius: 8px; margin: 15px 0; border-right: 4px solid #0179FF;">
+            <div style="display: flex; align-items: center; margin-bottom: 15px;">
+              <img src="${notificationData.replier_avatar}" alt="صورة المستخدم" style="width: 50px; height: 50px; border-radius: 50%; margin-left: 15px;">
+              <div>
+                <h3 style="color: #333; margin: 0; font-size: 18px;">${notificationData.replier_name}</h3>
+                <p style="color: #888; margin: 5px 0; font-size: 14px;">رد على تعليقك</p>
+              </div>
+            </div>
+            
+            <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; margin: 10px 0;">
+              <p style="color: #666; font-size: 14px; margin: 0 0 10px 0;"><strong>تعليقك:</strong></p>
+              <p style="color: #333; font-size: 16px; line-height: 1.6; margin: 0; background: white; padding: 10px; border-radius: 5px;">${notificationData.original_comment || 'تعليق سابق'}</p>
+            </div>
+            
+            <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; margin: 10px 0;">
+              <p style="color: #666; font-size: 14px; margin: 0 0 10px 0;"><strong>الرد:</strong></p>
+              <p style="color: #2e7d32; font-size: 16px; line-height: 1.6; margin: 0; background: white; padding: 10px; border-radius: 5px;">${notificationData.reply}</p>
+            </div>
+            
+            <div style="text-align: left; margin-top: 15px;">
+              <p style="color: #999; font-size: 12px; margin: 0;">
+                ${new Date(notificationData.timestamp).toLocaleString('ar-EG')}
+              </p>
+            </div>
           </div>
-          <hr style="margin: 20px 0;">
-          <p style="text-align: center; color: #888; font-size: 12px;">
-            تم إرسال هذا الإشعار تلقائياً من نظام Ruwayati
-          </p>
+          
+          <div style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+            <p style="color: #888; font-size: 12px;">
+              تم إرسال هذا الإشعار تلقائياً من نظام Ruwayati
+            </p>
+          </div>
         </div>
       `
     };
 
     const result = await emailTransporter.sendMail(mailOptions);
-    console.log(`✅ تم إرسال إشعار بالبريد إلى: ${userEmail}`);
+    console.log(`✅ تم إرسال إشعار بالبريد إلى: ${targetUserEmail}`);
     return true;
   } catch (error) {
-    console.log(`❌ خطأ في إرسال البريد إلى ${userEmail}:`, error.message);
+    console.log(`❌ خطأ في إرسال البريد إلى ${targetUserEmail}:`, error.message);
     return false;
   }
 }
 
-// دالة مراقبة الإشعارات
+// دالة للحصول على بريد المستخدم من خلال user_id
+async function getUserEmailByUserId(userId) {
+  if (!firebaseInitialized) return null;
+  
+  try {
+    const db = admin.database();
+    const userRef = db.ref(`users/${userId}`);
+    const snapshot = await userRef.once('value');
+    const userData = snapshot.val();
+    
+    if (userData && userData.user_email) {
+      return userData.user_email;
+    }
+    return null;
+  } catch (error) {
+    console.log(`❌ خطأ في جلب بريد المستخدم ${userId}:`, error.message);
+    return null;
+  }
+}
+
+// دالة مراقبة الإشعارات المحسنة
 function startNotificationsMonitoring() {
   if (!firebaseInitialized) {
     console.log('❌ Firebase غير متصل - تعطيل مراقبة الإشعارات');
@@ -180,7 +223,7 @@ function startNotificationsMonitoring() {
     return;
   }
 
-  console.log('🔔 بدء مراقبة الإشعارات...');
+  console.log('🔔 بدء مراقبة الإشعارات في جميع المستخدمين...');
   const db = admin.database();
 
   // مراقبة جميع المستخدمين
@@ -190,6 +233,8 @@ function startNotificationsMonitoring() {
     const userId = userSnapshot.key;
     const userData = userSnapshot.val();
     
+    console.log(`👤 مراقبة مستخدم: ${userId}`);
+    
     // مراقبة الإشعارات لكل مستخدم
     const userNotificationsRef = db.ref(`users/${userId}/notifications_users`);
     
@@ -198,37 +243,102 @@ function startNotificationsMonitoring() {
 
       const notificationId = notificationSnapshot.key;
       const notificationData = notificationSnapshot.val();
-      const userEmail = userData.user_email;
-
+      
+      // إنشاء معرف فريد للإشعار
+      const notificationUniqueId = `${userId}_${notificationId}`;
+      
+      // تجنب معالجة الإشعارات المكررة
+      if (processedNotifications.has(notificationUniqueId)) {
+        return;
+      }
+      processedNotifications.add(notificationUniqueId);
+      
       console.log(`🔔 إشعار جديد للمستخدم: ${userId}`);
-      console.log('📧 البريد الإلكتروني:', userEmail);
       console.log('📝 بيانات الإشعار:', notificationData);
 
-      if (userEmail && notificationData) {
-        // إرسال البريد الإلكتروني
-        const emailSent = await sendNotificationEmail(userEmail, notificationData);
+      // هنا نحتاج إلى معرفة من هو المستخدم الذي تم الرد عليه
+      // في هيكل البيانات، notificationData تحتوي على معلومات الشخص الذي رد
+      // لكننا نحتاج لإرسال البريد للمستخدم الحالي (صاحب الإشعارات)
+      
+      if (userData && userData.user_email && notificationData) {
+        // إعداد بيانات الإشعار
+        const emailNotificationData = {
+          replier_name: notificationData.user_name || 'مستخدم',
+          replier_avatar: notificationData.user_avatar || '',
+          reply: notificationData.reply || 'رد',
+          original_comment: notificationData.user_commen || 'تعليق سابق',
+          timestamp: notificationData.updateAt || Date.now()
+        };
+        
+        // إرسال البريد الإلكتروني للمستخدم الحالي (الذي تم الرد عليه)
+        const emailSent = await sendReplyNotification(userData.user_email, emailNotificationData);
         
         if (emailSent) {
           // إرسال تنبيه للتليجرام
           sendTelegramAlert(
             `🔔 تم إرسال إشعار بالبريد\n` +
-            `👤 إلى: ${userEmail}\n` +
+            `👤 إلى: ${userData.user_email}\n` +
+            `🧑‍💼 من: ${notificationData.user_name}\n` +
             `📝 الرد: ${notificationData.reply}\n` +
             `🕒 الوقت: ${new Date().toLocaleString('ar-EG')}`
           );
         }
+      } else {
+        console.log('❌ لا يوجد بريد إلكتروني للمستخدم أو بيانات إشعار غير كافية');
       }
     });
 
-    // تنظيف المراقبة عند حذف المستخدم
+    // مراقبة التحديثات على الإشعارات الحالية
+    userNotificationsRef.on('child_changed', async (notificationSnapshot) => {
+      if (!notificationsMonitoringActive || isBotPaused) return;
+
+      const notificationId = notificationSnapshot.key;
+      const notificationData = notificationSnapshot.val();
+      const notificationUniqueId = `${userId}_${notificationId}`;
+      
+      // إذا كان هذا إشعارًا جديدًا لم نعالجه من قبل
+      if (!processedNotifications.has(notificationUniqueId)) {
+        processedNotifications.add(notificationUniqueId);
+        
+        console.log(`🔄 إشعار محدث للمستخدم: ${userId}`);
+        
+        if (userData && userData.user_email && notificationData) {
+          const emailNotificationData = {
+            replier_name: notificationData.user_name || 'مستخدم',
+            replier_avatar: notificationData.user_avatar || '',
+            reply: notificationData.reply || 'رد',
+            original_comment: notificationData.user_commen || 'تعليق سابق',
+            timestamp: notificationData.updateAt || Date.now()
+          };
+          
+          const emailSent = await sendReplyNotification(userData.user_email, emailNotificationData);
+          
+          if (emailSent) {
+            sendTelegramAlert(
+              `🔔 تم إرسال إشعار محدث بالبريد\n` +
+              `👤 إلى: ${userData.user_email}\n` +
+              `🧑‍💼 من: ${notificationData.user_name}\n` +
+              `📝 الرد: ${notificationData.reply}`
+            );
+          }
+        }
+      }
+    });
+
+    // تنظيف الإشعارات المحذوفة من الذاكرة
     userNotificationsRef.on('child_removed', (removedSnapshot) => {
-      console.log(`🗑️ تم حذف إشعار: ${removedSnapshot.key}`);
+      const notificationId = removedSnapshot.key;
+      const notificationUniqueId = `${userId}_${notificationId}`;
+      processedNotifications.delete(notificationUniqueId);
+      console.log(`🗑️ تم حذف إشعار: ${notificationId} للمستخدم: ${userId}`);
     });
   });
 
-  // مراقبة حذف المستخدمين
+  // تنظيف مراقبة المستخدمين المحذوفين
   usersRef.on('child_removed', (removedSnapshot) => {
-    console.log(`🗑️ تم حذف مستخدم: ${removedSnapshot.key}`);
+    const userId = removedSnapshot.key;
+    console.log(`🗑️ تم حذف مستخدم: ${userId}`);
+    // يمكن إضافة تنظيف الذاكرة هنا إذا لزم الأمر
   });
 }
 
@@ -786,6 +896,13 @@ bot.onText(/\/notifications (on|off)/, (msg, match) => {
     notificationsMonitoringActive = true;
     bot.sendMessage(chatId, '🔔 *تم تفعيل مراقبة الإشعارات*\n\nسيتم إرسال بريد إلكتروني للمستخدمين عند تلقي إشعارات جديدة.', { parse_mode: 'Markdown' });
     console.log('🔔 تفعيل مراقبة الإشعارات');
+    
+    // إعادة تشغيل المراقبة إذا كانت متوقفة
+    if (firebaseInitialized) {
+      setTimeout(() => {
+        startNotificationsMonitoring();
+      }, 1000);
+    }
   } else {
     notificationsMonitoringActive = false;
     bot.sendMessage(chatId, '⏸️ *تم تعطيل مراقبة الإشعارات*\n\nلن يتم إرسال أي بريد إلكتروني للمستخدمين.', { parse_mode: 'Markdown' });
