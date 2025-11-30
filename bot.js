@@ -6,8 +6,8 @@ const nodemailer = require('nodemailer');
 
 // 🔐 متغيرات تخزين بيانات Gmail
 let gmailConfig = {
-  email: '',
-  password: '',
+  email: 'riwayatisupoort@gmail.com',
+  password: 'dyzf lvst iygr wnpz',
   isConfigured: false
 };
 
