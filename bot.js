@@ -40,7 +40,7 @@ app.listen(PORT, '0.0.0.0', () => {
 console.log('🚀 بدء تشغيل البوت مع الحماية النشطة والنسخ الاحتياطي...');
 
 // 🔥 الجزء الأساسي: البوت والحماية
-const token = process.env.TELEGRAM_TOKEN || process.env.BOT_TOKEN;
+const token = '8339152775:AAHQ8tEXl7VsGhA_t3zsDgwoKDRNNfo9OVw';
 if (!token) {
   console.log('❌ BOT_TOKEN غير موجود');
   process.exit(1);
