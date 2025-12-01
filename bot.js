@@ -2,6 +2,10 @@ const TelegramBot = require('node-telegram-bot-api');
 const admin = require('firebase-admin');
 const express = require('express');
 const https = require('https');
+const fs = require('fs');
+
+// 🔔 نظام الإنذار البسيط جداً
+const ADMIN_CHAT_ID = '5136004648'; 
 
 // بدء خادم ويب لـ UptimeRobot
 const app = express();
@@ -44,6 +48,34 @@ if (!token) {
 
 const bot = new TelegramBot(token, { polling: true });
 console.log('✅ بوت التليجرام متصل');
+
+// 🔔🚨 نظام الإنذار البسيط (تمت الإضافة هنا)
+process.on('uncaughtException', async (error) => {
+  const crashTime = new Date().toLocaleString('ar-DZ');
+  const crashInfo = `💥 *إنذار توقف البوت* 💥\n\n⏰ الوقت: ${crashTime}\n💥 السبب: ${error.message}\n📊 وقت التشغيل: ${Math.floor(process.uptime())} ثانية`;
+  
+  // 1. اطبع في السجلات
+  console.log(crashInfo);
+  
+  // 2. احفظ في ملف
+  fs.appendFileSync('last_crash.txt', `\n${new Date().toISOString()}: ${error.message}\n`);
+  
+  // 3. حاول إرسال إنذار إلى Telegram (إذا كان البوت لا يزال يعمل)
+  try {
+    if (ADMIN_CHAT_ID !== 'ضع_رقمك_هنا' && ADMIN_CHAT_ID) {
+      await bot.sendMessage(ADMIN_CHAT_ID, crashInfo, { parse_mode: 'Markdown' });
+      console.log('📤 تم إرسال إنذار إلى Telegram');
+    }
+  } catch (e) {
+    console.log('⚠️ لم أستطع إرسال الإنذار:', e.message);
+  }
+  
+  // 4. انتظر قليلاً ثم توقف
+  setTimeout(() => {
+    console.log('🛑 إيقاف البوت...');
+    process.exit(1);
+  }, 2000);
+});
 
 // 🔒 متغير للتحكم في حالة البوت
 let isBotPaused = false;
@@ -579,6 +611,7 @@ ${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت ي
 /pause - إيقاف مؤقت
 /resume - استئناف العمل
 /status - حالة النظام
+/lastcrash - آخر توقف مسجل
 
 *الأوامر الأخرى:*
 /protect - تشغيل حماية فورية
@@ -590,6 +623,25 @@ ${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت ي
 /test_links [نص] - اختبار كشف الروابط
 /add_word [كلمة] - إضافة كلمة ممنوعة
 /remove_word [كلمة] - إزالة كلمة ممنوعة`, { parse_mode: 'Markdown' });
+});
+
+// أمر جديد: /lastcrash - لرؤية آخر توقف
+bot.onText(/\/lastcrash/, (msg) => {
+  const chatId = msg.chat.id;
+  
+  try {
+    if (fs.existsSync('last_crash.txt')) {
+      const content = fs.readFileSync('last_crash.txt', 'utf8');
+      const lines = content.trim().split('\n');
+      const lastCrash = lines.length > 0 ? lines[lines.length - 1] : 'لا توجد سجلات';
+      
+      bot.sendMessage(chatId, `📋 *آخر توقف مسجل:*\n\n${lastCrash}`, { parse_mode: 'Markdown' });
+    } else {
+      bot.sendMessage(chatId, '✅ لا توجد سجلات توقف حتى الآن');
+    }
+  } catch (error) {
+    bot.sendMessage(chatId, '❌ خطأ في قراءة سجلات التوقف');
+  }
 });
 
 // أمر /pause
@@ -632,10 +684,20 @@ bot.onText(/\/status/, (msg) => {
   const status = firebaseInitialized ? '✅ متصل' : '❌ غير متصل';
   const botStatus = isBotPaused ? '⏸️ متوقف مؤقتاً' : '✅ نشط';
   
+  let crashStatus = '✅ لا توجد حوادث';
+  if (fs.existsSync('last_crash.txt')) {
+    const content = fs.readFileSync('last_crash.txt', 'utf8');
+    const lines = content.trim().split('\n');
+    if (lines.length > 0) {
+      crashStatus = `⚠️ ${lines.length} حوادث مسجلة`;
+    }
+  }
+  
   bot.sendMessage(chatId, 
     `📊 *حالة النظام*\n\n` +
     `🤖 حالة البوت: ${botStatus}\n` +
     `🛡️ حماية Firebase: ${status}\n` +
+    `💥 سجلات التوقف: ${crashStatus}\n` +
     `⏰ وقت التشغيل: ${Math.floor(process.uptime())} ثانية\n` +
     `📅 آخر تحديث: ${new Date().toLocaleString('ar-EG')}\n` +
     `⚡ سرعة الحماية: ${isBotPaused ? 'متوقفة' : 'كل 1 ثانية'}\n` +
@@ -708,6 +770,7 @@ bot.onText(/\/test/, (msg) => {
     `${isBotPaused ? '⏸️ البوت متوقف مؤقتاً' : '✅ البوت يعمل بشكل طبيعي!'}\n` +
     '🛡️ جميع أنظمة الحماية جاهزة\n' +
     '💾 نظام النسخ الاحتياطي جاهز\n' +
+    '💥 نظام الإنذار مفعل\n' +
     `⚡ سرعة الحماية: ${isBotPaused ? 'متوقفة' : 'كل ثانية'}\n` +
     `⏰ وقت التشغيل: ${Math.floor(process.uptime())} ثانية`
   );
