@@ -526,7 +526,7 @@ async function initializeFirebase() {
 }
 
 // 🛡️ كود الحماية الأساسي
-const ALLOWED_NODES = ['users', 'comments', 'views', 'update', 'all_users'];
+const ALLOWED_NODES = ['users', 'comments', 'views', 'update', 'all_users', 'bot_control'];
 
 // 📋 قائمة كلمات السب المحسنة
 const BAD_WORDS = [
