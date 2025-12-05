@@ -1007,6 +1007,7 @@ ${!firebaseInitialized ? '⚠️ *ملاحظة:* Firebase غير متصل، ال
 /test_filter [نص] - اختبار الفلتر
 /test_links [نص] - اختبار كشف الروابط
 /add_word [كلمة] - إضافة كلمة ممنوعة
+/add_key [key] 
 /remove_word [كلمة] - إزالة كلمة ممنوعة`, { parse_mode: 'Markdown' });
     });
 
@@ -1368,6 +1369,12 @@ ${!firebaseInitialized ? '⚠️ *ملاحظة:* Firebase غير متصل، ال
       const wordsList = BAD_WORDS.join(', ');
       bot.sendMessage(chatId, `📋 *الكلمات الممنوعة:*\n\n${wordsList}\n🌐 المنصة: ${platform}`, { parse_mode: 'Markdown' });
     });
+    
+    bot.onText(/\/badwords_list/, (msg) => {
+      const chatId = msg.chat.id;
+      const wordsList = ALLOWED_NODES.join(', ');
+      bot.sendMessage(chatId, `📋 *الكلمات الممنوعة:*\n\n${wordsList}\n🌐 المنصة: ${platform}`, { parse_mode: 'Markdown' });
+    });
 
     // أمر /test_filter
     bot.onText(/\/test_filter (.+)/, (msg, match) => {
@@ -1425,6 +1432,20 @@ ${!firebaseInitialized ? '⚠️ *ملاحظة:* Firebase غير متصل، ال
         bot.sendMessage(chatId, `⚠️ الكلمة "${word}" موجودة بالفعل في القائمة.\n🌐 المنصة: ${platform}`);
       } else {
         BAD_WORDS.push(word);
+        bot.sendMessage(chatId, `✅ تمت إضافة الكلمة "${word}" إلى القائمة الممنوعة.\n🌐 المنصة: ${platform}`);
+        console.log(`✅ تمت إضافة كلمة جديدة: ${word}`);
+      }
+    });
+    
+        // أمر /add_key
+    bot.onText(/\/add_key (.+)/, (msg, match) => {
+      const chatId = msg.chat.id;
+      const word = match[1].trim();
+      
+      if (ALLOWED_NODES.includes(word)) {
+        bot.sendMessage(chatId, `⚠️ الكلمة "${word}" موجودة بالفعل في القائمة.\n🌐 المنصة: ${platform}`);
+      } else {
+        ALLOWED_NODES.push(word);
         bot.sendMessage(chatId, `✅ تمت إضافة الكلمة "${word}" إلى القائمة الممنوعة.\n🌐 المنصة: ${platform}`);
         console.log(`✅ تمت إضافة كلمة جديدة: ${word}`);
       }
