@@ -1,7 +1,8 @@
 const TelegramBot = require('node-telegram-bot-api');
 const admin = require('firebase-admin');
 const express = require('express');
-const https = require('https');
+const http = require('http'); // تغيير من https إلى http
+const https = require('https'); // للاستخدام الخارجي فقط
 const fs = require('fs');
 
 // 🔔 نظام الإنذار البسيط جداً
@@ -966,21 +967,36 @@ function startBackupSchedule() {
   }, BACKUP_INTERVAL);
 }
 
-// 🎯 الحفاظ على الاستيقاظ
+// 🎯 **الحل: دالة الحفاظ على الاستيقاظ المعدلة**
 function keepServiceAlive() {
   console.log('🔧 تفعيل الحفاظ على الاستيقاظ...');
   
-  const url = process.env.RAILWAY_STATIC_URL 
-    ? `https://${process.env.RAILWAY_STATIC_URL}/ping`
-    : `http://localhost:${PORT}/ping`;
+  // استخدم http للطلبات الداخلية (localhost)
+  const useHttp = !process.env.RAILWAY_STATIC_URL;
+  const url = useHttp 
+    ? `http://localhost:${PORT}/ping`
+    : `https://${process.env.RAILWAY_STATIC_URL}/ping`;
+  
+  // اختر الوحدة المناسبة للبروتوكول
+  const requestModule = useHttp ? http : https;
   
   setInterval(() => {
-    https.get(url, (res) => {
+    requestModule.get(url, (res) => {
       console.log('🔄 ping ناجح: ' + new Date().toLocaleTimeString('ar-EG'));
     }).on('error', (err) => {
       console.log('⚠️ خطأ في ping: ' + err.message);
+      
+      // إذا فشل ping لـ Railway، حاول مع http كبديل
+      if (!useHttp && err.message.includes('Protocol "https:" not supported')) {
+        console.log('🔄 محاولة ping مع http بدلاً من https...');
+        http.get(`http://${process.env.RAILWAY_STATIC_URL}/ping`, (res2) => {
+          console.log('✅ ping مع http ناجح');
+        }).on('error', (err2) => {
+          console.log('❌ ping مع http فشل أيضاً:', err2.message);
+        });
+      }
     });
-  }, 4 * 60 * 1000);
+  }, 4 * 60 * 1000); // كل 4 دقائق
 }
 
 // 🛑 إغلاق نظيف للبوت
