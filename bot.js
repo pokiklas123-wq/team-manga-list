@@ -9,6 +9,7 @@ const express = require('express');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
+const path = require('path');
 
 // 🔔 نظام الإنذار البسيط جداً
 const ADMIN_CHAT_ID = '5136004648'; 
@@ -59,6 +60,9 @@ app.get('/visitors', (req, res) => {
 
 app.get('/app', (req, res) => {
   visitorCount++;
+  const firebaseStatus = firebaseInitialized ? 'نشط' : 'غير متصل';
+  const platformName = process.env.RAILWAY_STATIC_URL ? 'Railway' : (process.env.RENDER ? 'Render' : 'محلي');
+  
   res.send(`
     <!DOCTYPE html>
     <html dir="rtl">
@@ -107,6 +111,9 @@ app.get('/app', (req, res) => {
                 font-weight: bold;
                 margin: 5px;
             }
+            .badge-error {
+                background: #f44336;
+            }
         </style>
     </head>
     <body>
@@ -120,8 +127,8 @@ app.get('/app', (req, res) => {
                 <p><strong>📅 آخر تحديث:</strong> ${new Date().toLocaleString('ar-EG')}</p>
                 <p><strong>👥 عدد الزيارات:</strong> ${visitorCount}</p>
                 <p><strong>🤖 حالة البوت:</strong> <span class="badge">نشط</span></p>
-                <p><strong>🛡️ حماية Firebase:</strong> <span class="badge">${firebaseInitialized ? 'نشط' : 'غير متصل'}</span></p>
-                <p><strong>🌐 المنصة:</strong> <span class="badge">${process.env.RAILWAY_STATIC_URL ? 'Railway' : (process.env.RENDER ? 'Render' : 'محلي')}</span></p>
+                <p><strong>🛡️ حماية Firebase:</strong> <span class="badge ${firebaseInitialized ? '' : 'badge-error'}">${firebaseStatus}</span></p>
+                <p><strong>🌐 المنصة:</strong> <span class="badge">${platformName}</span></p>
             </div>
         </div>
     </body>
@@ -283,28 +290,45 @@ async function initializeFirebase() {
     console.log('🔍 بدء تهيئة Firebase...');
     console.log(`🌐 المنصة: ${platform}`);
     
-    // التحقق من وجود جميع المتغيرات
-    const requiredVars = ['FIREBASE_PRIVATE_KEY', 'FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL'];
-    const missingVars = [];
+    // التحقق من وجود جميع المتغيرات - دعم التسميات المختلفة
+    const requiredVars = [
+      { name: 'FIREBASE_PRIVATE_KEY', alt: 'FIREBASEPRIVATEKEY' },
+      { name: 'FIREBASE_PROJECT_ID', alt: 'FIREBASEPROJECTID' },
+      { name: 'FIREBASE_CLIENT_EMAIL', alt: 'FIREBASECLIENTEMAIL' }
+    ];
     
-    for (const varName of requiredVars) {
-      if (!process.env[varName]) {
-        missingVars.push(varName);
+    const missingVars = [];
+    const envVars = {};
+    
+    // محاولة قراءة المتغيرات بجميع التسميات الممكنة
+    for (const varInfo of requiredVars) {
+      let value = process.env[varInfo.name] || process.env[varInfo.alt];
+      
+      if (!value) {
+        missingVars.push(varInfo.name);
+      } else {
+        envVars[varInfo.name] = value;
       }
     }
     
     if (missingVars.length > 0) {
       console.log(`❌ متغيرات Firebase مفقودة: ${missingVars.join(', ')}`);
+      console.log(`🔍 البحث عن تسميات بديلة...`);
+      
+      // البحث عن أسماء متغيرة أخرى
+      const allEnvVars = Object.keys(process.env);
+      console.log('متغيرات البيئة المتاحة:', allEnvVars.filter(v => v.includes('FIREBASE')));
+      
       throw new Error(`متغيرات مفقودة: ${missingVars.join(', ')}`);
     }
     
     console.log('✅ جميع متغيرات Firebase موجودة');
-    console.log(`🏢 معرف المشروع: ${process.env.FIREBASE_PROJECT_ID}`);
-    console.log(`📧 البريد الإلكتروني: ${process.env.FIREBASE_CLIENT_EMAIL}`);
-    console.log(`📏 طول المفتاح الأصلي: ${process.env.FIREBASE_PRIVATE_KEY.length} حرف`);
+    console.log(`🏢 معرف المشروع: ${envVars.FIREBASE_PROJECT_ID}`);
+    console.log(`📧 البريد الإلكتروني: ${envVars.FIREBASE_CLIENT_EMAIL}`);
+    console.log(`📏 طول المفتاح الأصلي: ${envVars.FIREBASE_PRIVATE_KEY.length} حرف`);
     
     // معالجة المفتاح الخاص
-    const processedPrivateKey = processFirebasePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+    const processedPrivateKey = processFirebasePrivateKey(envVars.FIREBASE_PRIVATE_KEY);
     
     if (!processedPrivateKey.includes('-----BEGIN PRIVATE KEY-----')) {
       console.log('⚠️ تحذير: تنسيق المفتاح قد لا يكون صحيحاً');
@@ -317,9 +341,9 @@ async function initializeFirebase() {
         console.log('🔄 المحاولة 1: التنسيق القياسي');
         return admin.initializeApp({
           credential: admin.credential.cert({
-            project_id: process.env.FIREBASE_PROJECT_ID.trim(),
+            project_id: envVars.FIREBASE_PROJECT_ID.trim(),
             private_key: processedPrivateKey,
-            client_email: process.env.FIREBASE_CLIENT_EMAIL.trim()
+            client_email: envVars.FIREBASE_CLIENT_EMAIL.trim()
           }),
           databaseURL: 'https://manga-arabic-default-rtdb.europe-west1.firebasedatabase.app'
         });
@@ -330,9 +354,9 @@ async function initializeFirebase() {
         console.log('🔄 المحاولة 2: أسماء الحقول البديلة');
         return admin.initializeApp({
           credential: admin.credential.cert({
-            projectId: process.env.FIREBASE_PROJECT_ID.trim(),
+            projectId: envVars.FIREBASE_PROJECT_ID.trim(),
             privateKey: processedPrivateKey,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL.trim()
+            clientEmail: envVars.FIREBASE_CLIENT_EMAIL.trim()
           }),
           databaseURL: 'https://manga-arabic-default-rtdb.europe-west1.firebasedatabase.app'
         });
@@ -343,12 +367,12 @@ async function initializeFirebase() {
         console.log('🔄 المحاولة 3: مع إعدادات إضافية');
         return admin.initializeApp({
           credential: admin.credential.cert({
-            project_id: process.env.FIREBASE_PROJECT_ID.trim(),
+            project_id: envVars.FIREBASE_PROJECT_ID.trim(),
             private_key: processedPrivateKey,
-            client_email: process.env.FIREBASE_CLIENT_EMAIL.trim()
+            client_email: envVars.FIREBASE_CLIENT_EMAIL.trim()
           }),
           databaseURL: 'https://manga-arabic-default-rtdb.europe-west1.firebasedatabase.app',
-          storageBucket: `${process.env.FIREBASE_PROJECT_ID.trim()}.appspot.com`
+          storageBucket: `${envVars.FIREBASE_PROJECT_ID.trim()}.appspot.com`
         });
       }
     ];
@@ -388,14 +412,14 @@ async function initializeFirebase() {
           console.log('🚂 محاولة خاصة لـ Railway: فك تشفير Base64');
           // Railway قد يحتاج Base64 decoding
           try {
-            const base64Match = process.env.FIREBASE_PRIVATE_KEY.match(/base64:(.*)/);
+            const base64Match = envVars.FIREBASE_PRIVATE_KEY.match(/base64:(.*)/);
             if (base64Match) {
               const decodedKey = Buffer.from(base64Match[1], 'base64').toString('utf8');
               admin.initializeApp({
                 credential: admin.credential.cert({
-                  project_id: process.env.FIREBASE_PROJECT_ID.trim(),
+                  project_id: envVars.FIREBASE_PROJECT_ID.trim(),
                   private_key: decodedKey,
-                  client_email: process.env.FIREBASE_CLIENT_EMAIL.trim()
+                  client_email: envVars.FIREBASE_CLIENT_EMAIL.trim()
                 }),
                 databaseURL: 'https://manga-arabic-default-rtdb.europe-west1.firebasedatabase.app'
               });
@@ -944,7 +968,7 @@ async function protectionCycle() {
 // 💬 إعداد أوامر التليجرام
 function setupBotCommands() {
     if (!bot) {
-        console.log('❌ البوت غير مهيئ لإعداد الأوامר');
+        console.log('❌ البوت غير مهيئ لإعداد الأوامر');
         return;
     }
 
@@ -1014,16 +1038,28 @@ ${!firebaseInitialized ? '⚠️ *ملاحظة:* Firebase غير متصل، ال
       
       debugInfo += `*📋 متغيرات البيئة:*\n`;
       
-      // التحقق من متغيرات Firebase
-      const firebaseVars = ['FIREBASE_PRIVATE_KEY', 'FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL'];
+      // التحقق من جميع تسميات متغيرات Firebase المحتملة
+      const firebaseVars = [
+        { name: 'FIREBASE_PRIVATE_KEY', alt: 'FIREBASEPRIVATEKEY' },
+        { name: 'FIREBASE_PROJECT_ID', alt: 'FIREBASEPROJECTID' },
+        { name: 'FIREBASE_CLIENT_EMAIL', alt: 'FIREBASECLIENTEMAIL' }
+      ];
       
-      for (const varName of firebaseVars) {
-        const value = process.env[varName];
+      for (const varInfo of firebaseVars) {
+        const value = process.env[varInfo.name] || process.env[varInfo.alt];
         const exists = !!value;
+        const varNameToShow = varInfo.name;
         
-        debugInfo += `• ${varName}: ${exists ? '✅ موجود' : '❌ مفقود'}\n`;
-        if (exists && varName !== 'FIREBASE_PRIVATE_KEY') {
+        debugInfo += `• ${varNameToShow}: ${exists ? '✅ موجود' : '❌ مفقود'}\n`;
+        if (exists && !varInfo.name.includes('PRIVATE_KEY')) {
           debugInfo += `  📝 القيمة: ${value.trim()}\n`;
+        } else if (exists) {
+          debugInfo += `  📏 الطول: ${value.length} حرف\n`;
+        }
+        
+        // إظهار التسمية البديلة إذا كانت مستخدمة
+        if (!process.env[varInfo.name] && process.env[varInfo.alt]) {
+          debugInfo += `  🔄 مستخدم التسمية: ${varInfo.alt}\n`;
         }
       }
       
@@ -1057,17 +1093,32 @@ ${!firebaseInitialized ? '⚠️ *ملاحظة:* Firebase غير متصل، ال
         debugInfo += `• اختبار الاتصال: ❌ فاشل (Firebase غير مهيئ)\n`;
       }
       
+      // الحصول على جميع متغيرات Firebase المتاحة
+      debugInfo += `\n*📊 جميع متغيرات Firebase المتاحة:*\n`;
+      const allEnvVars = Object.keys(process.env);
+      const firebaseEnvVars = allEnvVars.filter(v => v.includes('FIREBASE'));
+      
+      if (firebaseEnvVars.length > 0) {
+        firebaseEnvVars.forEach(varName => {
+          if (!varName.includes('PRIVATE_KEY')) {
+            debugInfo += `• ${varName}: ${process.env[varName].substring(0, 30)}...\n`;
+          } else {
+            debugInfo += `• ${varName}: [مفتاح خاص - ${process.env[varName].length} حرف]\n`;
+          }
+        });
+      } else {
+        debugInfo += `• ❌ لا توجد متغيرات Firebase\n`;
+      }
+      
       // نصائح بناءً على المنصة
       debugInfo += `\n*💡 نصائح للمنصة:*\n`;
       
       if (platform === 'Railway') {
         debugInfo += `1. في Railway، تأكد أن المفتاح يحتوي على \\\\n بدلاً من \\n\n`;
-        debugInfo += `2. جرب استخدام \\\\n في FIREBASE_PRIVATE_KEY\n`;
-        debugInfo += `3. مثال: -----BEGIN PRIVATE KEY-----\\\\nMII...\\\\n-----END PRIVATE KEY-----\n`;
+        debugInfo += `2. جرب استخدام \\\\n في المفتاح الخاص\n`;
       } else if (platform === 'Render') {
         debugInfo += `1. في Render، استخدم المفتاح كما هو\n`;
         debugInfo += `2. تأكد من عدم وجود مسافات زائدة\n`;
-        debugInfo += `3. مثال: -----BEGIN PRIVATE KEY-----\\nMII...\\n-----END PRIVATE KEY-----\n`;
       }
       
       debugInfo += `\n*🔄 إعادة المحاولة:*\n`;
@@ -1130,6 +1181,7 @@ ${!firebaseInitialized ? '⚠️ *ملاحظة:* Firebase غير متصل، ال
       platformInfo += `• الصفحة الرئيسية: /app\n`;
       platformInfo += `• فحص الصحة: /health\n`;
       platformInfo += `• Ping: /ping\n`;
+      platformInfo += `• عدد الزوار: /visitors\n`;
       
       bot.sendMessage(chatId, platformInfo, { parse_mode: 'Markdown' });
     });
@@ -1406,8 +1458,8 @@ ${!firebaseInitialized ? '⚠️ *ملاحظة:* Firebase غير متصل، ال
     });
 }
 
-// ⚡ التشغيل التلقائي كل 1 ثانية
-console.log('⚡ تفعيل الحماية التلقائية كل 1 ثانية...');
+// ⚡ التشغيل التلقائي كل 5 ثواني بدلاً من 1 ثانية لتقليل التحميل
+console.log('⚡ تفعيل الحماية التلقائية كل 5 ثواني...');
 
 function startProtectionCycle() {
   setTimeout(async () => {
@@ -1418,7 +1470,7 @@ function startProtectionCycle() {
     } finally {
       startProtectionCycle();
     }
-  }, 1000);
+  }, 5000); // تغيير من 1000 إلى 5000 لتقليل الحمل
 }
 
 // 🕒 نظام النسخ الاحتياطي التلقائي
